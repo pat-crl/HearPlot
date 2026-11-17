@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Music Analyser app icon</title>
+  <desc id="desc">A minimal dark icon with a white waveform and one blue analysed region.</desc>
+
+  <!-- The single frame and generous empty area keep the icon legible at Dock size. -->
+  <rect width="1024" height="1024" rx="184" fill="#080808"/>
+  <rect x="126" y="126" width="772" height="772" rx="70" fill="none" stroke="#272a31" stroke-width="10"/>
+
+  <!-- A restrained waveform is the clearest shorthand for the app's subject. -->
+  <path d="M154 512h96l34-88 46 184 54-292 58 382 62-314 54 226 48-164 40 112 38-46h126"
+        fill="none" stroke="#f5f3ee" stroke-width="24" stroke-linecap="square" stroke-linejoin="miter"/>
+
+  <!-- One translucent box suggests selecting and analysing a passage. -->
+  <rect x="396" y="228" width="232" height="568" fill="#78a9ff" fill-opacity="0.12" stroke="#78a9ff" stroke-width="14"/>
+  <line x1="512" y1="184" x2="512" y2="840" stroke="#78a9ff" stroke-width="9"/>
+
+  <!-- Small centred calibration marks borrow the interface's technical rhythm. -->
+  <path d="M488 180h68M488 844h68" stroke="#f5f3ee" stroke-opacity="0.42" stroke-width="8"/>
+</svg>

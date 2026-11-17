@@ -1,5 +1,30 @@
-.DS_Store
+# Desktop dependencies are installed locally and can be recreated with npm install.
 node_modules/
+
+# The packaged desktop app, DMG, and zip are generated with npm run build.
 dist/
-work/
+
+# macOS Finder metadata is not part of the app source.
+.DS_Store
+
+# Local settings may contain credentials or personal development configuration.
 .env
+.env.*
+!.env.example
+
+# Signing files belong in secure local storage, not source control.
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+
+# Other generated development files can always be recreated.
+out/
+coverage/
+.cache/
+.electron/
+
+# Local publication evidence and temporary review files.
+work/
