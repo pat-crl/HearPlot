@@ -1,0 +1,21 @@
+# Related work
+
+This note records tools that attach observations to a recording or its visual representation. It draws on the developers’ documentation and published research, reviewed on 18 November 2026.
+
+| Tool | What it supports | Relevance to Music Analyser |
+| --- | --- | --- |
+| SoundCloud | Listeners post comments at individual timestamps on the waveform, and other listeners can reply. | A familiar example of grounding a conversation in a particular moment of a recording. [Commenting guide](https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments) |
+| Notetracks | Reviewers can comment at a point or drag across the waveform to comment on a time range. | A close comparison for sharing observations about a specific passage during audio review. [Point and range comments](https://www.notetracks.com/help/how-to-leave-timestamped-comments-at-specific-points-or-ranges-on-audio-files) |
+| Boombox | Reviewers can attach text or voice notes to a time range and edit its start and end. | A direct precedent for region-based mix feedback. [Time-ranged comments](https://help.boombox.io/en/articles/9718329-time-ranged-comments) |
+| Sonic Visualiser | Its Boxes layer stores editable, labelled rectangles on a spectrogram. With a frequency scale in hertz, each box has time and frequency bounds. | A close precedent for persistent spectrogram annotations in music analysis. [Boxes layer documentation](https://sonicvisualiser.org/doc/reference/4.5.2/en/#boxes) |
+| Audacity | Labels can store the time and frequency bounds of a spectral selection for later recall. | The same kind of region can serve as a reference in an audio editor, including for spectral editing. [Spectral selection and editing](https://manual.audacityteam.org/man/spectral_selection.html) |
+| Acousmographe | INA-GRM developed a way to synchronise graphical representations with a recording and overlay them on a spectral display. | A historical precedent for using annotated recordings to analyse and teach music that lends itself to graphical transcription. [INA-GRM’s Acousmographe page](https://inagrm.com/fr/showcase/news/203). See also Geslin and Lefevre, *Sound and musical representation: The Acousmographe software* (ICMC 2004). |
+| EAnalysis | The tool supports graphical layers on sonograms, custom lists of analytical parameters and filters derived from drawn shapes. | A close precedent for bringing musical categories, graphical annotations and frequency-focused listening into the same analytical workflow. [EAnalysis feature documentation](https://logiciels.pierrecouprie.fr/?page_id=402) · [Couprie, TENOR 2018](https://www.tenor-conference.org/proceedings/2018/02_Couprie_tenor18.pdf) |
+| Raven Pro | Researchers can draw time–frequency boxes and associate user-defined annotation fields and acoustic measurements with each selection. | A precedent from bioacoustics for treating a marked sound as both a visual selection and a structured record. [Cornell Lab’s Raven Pro documentation](https://www.ravensoundsoftware.com/software/raven-pro/) |
+| NEAL | Annotators can draw spectrogram boxes, assign custom classes, add notes and listen to filtered selections. | A close technical parallel for combining selection, categorisation and focused playback. Its documented use is labelling animal sounds. [NEAL author preprint](https://arxiv.org/abs/2212.01457) · [Project repository](https://github.com/gibbona1/neal) |
+
+## What Music Analyser is investigating
+
+Music Analyser brings the familiarity of waveform commenting into a workspace for close listening. An observation can have a musical category such as timbre, texture or form, contain several linked passages, and let a reader play or loop each passage, with frequency-focused playback for spectrogram regions. An editable session carries those references so another listener can open them alongside their copy of the recording.
+
+The gap I want to address is practical. In teaching, I want to see whether students can connect a written observation to what they heard, revisit it, and compare it with another passage. In feedback between artists and engineers, I want to see whether a recipient can locate the intended sound and act on a comment more reliably when it carries a playable time–frequency reference. The same workflow supports both questions.

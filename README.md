@@ -20,6 +20,14 @@ These are the questions guiding development. Version **0.3.0** brings these work
 
 *Bounty Hill's “Drastic Indifference”, from Fourth Cause, with illustrative listening tasks. The recording is not included in this repository.*
 
+## Related work
+
+SoundCloud is a familiar example of commenting at a point on the waveform. Notetracks and Boombox extend that idea to feedback over a time range. [SoundCloud](https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments) · [Notetracks](https://www.notetracks.com/help/how-to-leave-timestamped-comments-at-specific-points-or-ranges-on-audio-files) · [Boombox](https://help.boombox.io/en/articles/9718329-time-ranged-comments)
+
+Sonic Visualiser supports labelled spectrogram boxes, and Audacity labels can retain a time and frequency selection. Acousmographe and EAnalysis have used graphical annotation for electroacoustic music analysis. In bioacoustics, Raven Pro attaches custom fields to a region, and NEAL combines region labels with frequency-filtered listening. [Comparison notes and sources](docs/related-work.md)
+
+The gap I want to address is how to communicate a listening observation so someone else can hear what it refers to. In Music Analyser, one note can link several passages, carry a musical category such as timbre or form, and let the reader replay each selected region. I’m interested in whether that helps students support an interpretation with audible examples and helps collaborators find the sound a mix note refers to.
+
 ## Current capabilities
 
 | Area | What the current app supports |
