@@ -8,13 +8,13 @@ Music Analyser is an ongoing project by Pat Carroll investigating how a shared v
 
 ## Project context
 
-The starting point is a problem I have encountered in teaching: students need a practical space in which to listen closely, organise observations and relate those observations to the musical work. A timestamp can locate a passage, but it does not necessarily identify the sound within it that deserves attention.
+The starting point is a problem I have encountered in teaching: students need a practical space in which to listen closely, organise observations and relate those observations to the musical work. A timestamp can locate a passage. Selecting a frequency range helps direct attention to a particular sound within it.
 
 This project brings listening, spectrograms and annotation into one workspace. Students can mark a passage, focus on a frequency range, replay it and write a detailed observation. An arrangement map sits alongside the notes, making it possible to consider the structure of the composition as well as individual events.
 
 The same approach has a second application in feedback between artists, engineers, collaborators, labels and A&R teams. A note about a particular sound can be attached directly to the relevant time-and-frequency region. The recipient has a more precise reference for the discussion and can audition that region within the recording.
 
-These are the questions guiding development. The current application is a working desktop prototype, version **0.2.3**, and a first step towards evaluating these uses. It does not yet establish improved learning or communication outcomes. Classroom use, feedback practices and the interpretation of visual information are areas for further investigation.
+These are the questions guiding development. Version **0.3.0** brings these workflows into a redesigned workspace and adds MixLab for more detailed listening and comparison. How students use frequency-focused playback, and whether precise references change the quality of feedback, remain questions for evaluation.
 
 ![Music Analyser showing a waveform, spectrogram, arrangement section and two example annotations.](docs/images/music-analyser-overview.jpg)
 
@@ -25,7 +25,7 @@ These are the questions guiding development. The current application is a workin
 | Area | What the current app supports |
 | --- | --- |
 | Visual listening | Aligned waveform and logarithmic spectrogram, drawn from a local audio file. |
-| Precise annotation | Time ranges on the waveform; time-and-frequency boxes on the spectrogram; several linked regions for one note. |
+| Precise annotation | Time ranges on the waveform; time-and-frequency boxes on the spectrogram; exact keyboard entry in seconds and hertz; several linked regions for one note. |
 | Structured notes | Built-in form, melody, rhythm, harmony, timbre, texture and dynamics categories, plus custom categories and colour-coded cards. |
 | Region audition | Play or loop saved regions. Spectrogram selections use steep high-pass and low-pass filters to focus listening on the selected band. |
 | Listening controls | Sub-to-air frequency presets, pitch-preserving playback at 50%, 75%, 100% and 125%, selection looping and a stereo level meter. |
@@ -33,11 +33,12 @@ These are the questions guiding development. The current application is a workin
 | Arrangement | Named and coloured section markers, with boundaries snapped to bar starts. Detailed annotations keep their exact selected seconds. |
 | Reviewing | Search, category filters, optional read-ahead notes, focused view and undo/redo. |
 | Saving and exchange | Local autosave, recent recordings, editable JSON session import/export and categorised plain-text copying. A session can include a sender-provided HTTPS audio-download link. |
-| Measurements | Integrated LUFS, sample peak and whole-track RMS. Sample peak is not a true-peak measurement. |
+| Measurements | Integrated LUFS, sample peak and whole-track RMS. Open MixLab for momentary and short-term loudness, loudness range, an estimated true peak, dynamics, stereo and frequency-band measurements. |
+| Mix comparison | Optional reference recording, A/B audition at the same elapsed position where possible, attenuation-only level matching, and exportable measurements. |
 
-![A selected spectrogram region linked to an example timbre annotation, with region play and loop controls.](docs/images/music-analyser-region.jpg)
+![MixLab compares Drastic Indifference with Upheld, showing the two loudness traces and the playback trim for each recording.](docs/images/music-analyser-mixlab.jpg)
 
-*A note retains its time and frequency reference. Region playback filters the mix; it does not separate an instrument or produce a stem.*
+*MixLab compares Bounty Hill’s “Drastic Indifference” and “Upheld” from Fourth Cause. Playback matching trims the louder recording. The chart shows the original measured loudness.*
 
 ## Installation
 
@@ -64,33 +65,35 @@ On Apple Silicon, the app is written to `dist/mac-arm64/Music Analyser.app`. Uns
 
 ## Basic workflow
 
-1. Choose or drop a recording. WAV is a useful starting point; support for other formats depends on Chromium's decoder.
+1. Choose or drop a recording. WAV and uncompressed PCM AIFF are supported. Other formats use Chromium’s decoder.
 2. Check the tempo and beat grid if you want to work in bars. Correct its estimate where necessary.
 3. Drag across the waveform, or draw a box on the spectrogram. Choose a category and add an observation.
 4. Select a saved note to reveal its region. Use that region's play or loop control to listen again.
 5. Map arrangement sections separately from the analytical notes. Use search and category filters to review the analysis.
-6. Save an editable JSON session, or copy the analysis as text. Keep the recording and session backed up separately.
+6. Open MixLab for detailed measurements or choose a reference to compare. Live reference playback requires the audio file. Saved sessions retain reference measurements.
+7. Save an editable JSON session, or copy the analysis as text. Keep the recording and session backed up separately.
 
 For exchange, send the JSON and arrange access to the same recording. The JSON does not contain audio. An optional download link helps the recipient obtain it; they still select the downloaded file themselves. The current workflow has no live co-editing, threaded discussion, shared accounts or automatic cloud sync.
 
 ## Data and limitations
 
-Audio analysis and playback run locally. The app requests IBM Plex Mono from Google Fonts when online. A sharing action uses the destination you choose, and opening an optional audio link contacts its host. See [Privacy](PRIVACY.md) for the full description.
+Audio analysis, audio playback and interface fonts stay on the device. A sharing action uses the destination you choose, and opening an optional audio link contacts its host. See [Privacy](PRIVACY.md) for the full description.
 
-Notes are held in local application storage. Clearing it removes saved analysis data; moving a recording can break its recent-file shortcut. Export JSON sessions for portable backups.
+Notes are held in local application storage. If saving fails, a persistent warning asks you to export a JSON backup while the current edits remain available in memory. Clearing storage removes saved analysis data; moving a recording can break its recent-file shortcut. Portable JSON exports omit the original computer’s path and file identity; imports keep the recipient’s chosen local recording. Earlier versions could keep separate picker and Recent saves for a recording. If both have edits, the app offers the alternate as an editable JSON session. If an existing autosave cannot be read, the app retains it and saves new edits separately. Export JSON sessions for portable backups.
 
-Tempo estimation assumes a constant grid and can be ambiguous around pickups, ambient introductions, syncopation and changing tempo. The spectrogram analyses the first channel with a fixed 2048-point FFT. There is no zoomed editing view yet, so very short events in long recordings can be difficult to select. The displayed sample rate belongs to the decoded analysis buffer and may differ from the source file's rate. Filtering helps direct attention but cannot isolate sources that overlap in frequency.
+Tempo estimation assumes a constant grid and can be ambiguous around pickups, ambient introductions, syncopation and changing tempo. The spectrogram analyses the first channel with a 2,048–8,192-point FFT scaled for higher sample rates. There is no zoomed editing view yet, so very short events in long recordings can be difficult to select. Analysis uses the source sample rate for recognised WAV, AIFF and FLAC headers in the supported range, and 48 kHz otherwise. The app limits encoded input and decoded analysis jobs to 512 MiB each. For longer or multichannel material, use a shorter excerpt. MixLab tone and stereo descriptors represent the first channel pair. Its true-peak reading uses a 4× cubic estimate. Sounds in the same band remain audible together during frequency-filtered playback.
 
-The dependency installation on 17 November 2026 reported **13 npm audit findings: 6 moderate and 7 high**, including Electron and transitive build dependencies. These remain unresolved in the published lockfile; the passing tests and build are not a security assessment.
+The 0.3.0 dependency audit, on 18 November 2026, found two advisories affecting the development and packaging chain. npm reported 11 affected entries and zero findings with development dependencies omitted. The locked runtime is Electron 43.8.10 and the packaging tool is electron-builder 26.18.1.
 
 ## Verification and development
 
 ```bash
 npm test
+npm run test:integration
 npm run sync:legal
 ```
 
-All **30 generated-audio tests** and the unsigned Apple Silicon macOS build passed on 17 November 2026. Tests cover loudness calibration and gating, tempo/downbeat estimates, spectrogram sizing and frequency mapping, and metronome scheduling calculations. They do not establish performance on all music, classroom effectiveness or perceptual timing in every playback environment.
+Run the unit and Electron integration checks before building. The core and MixLab workloads use cancellable Web Workers with transferred PCM, while playback and editing remain in the renderer. The app uses the existing version 3 session format with optional MixLab measurements, and reads supported earlier sessions. For 0.3.0, 69 unit tests and 51 Electron integration and layout checks passed on Apple Silicon macOS. Coverage includes loudness calibration, tempo and downbeat estimation, frequency mapping, region playback, session recovery, A/B comparison, and layout at 200% zoom.
 
 For a browser-based development check, serve this directory with `python3 -m http.server 4173` and open `http://127.0.0.1:4173`. Adding `?demo=1` generates a synthetic test recording. Native metadata and recent-file reopening require Electron.
 
@@ -98,7 +101,7 @@ See [Project Overview](project-overview.md) for source orientation and implement
 
 ## Acknowledgements and rights
 
-The interface and analysis are implemented in HTML, CSS and JavaScript, using the Web Audio and Canvas APIs. The desktop shell uses [Electron](https://github.com/electron/electron/blob/main/LICENSE), and packaging uses [electron-builder](https://github.com/electron-userland/electron-builder/blob/master/LICENSE); both use the MIT licence and retain their upstream dependency notices. [IBM Plex Mono](https://github.com/IBM/plex/blob/master/LICENSE.txt) uses the SIL Open Font License 1.1 and is requested through Google Fonts rather than bundled here. No machine-learning model is used.
+The interface and analysis are implemented in HTML, CSS and JavaScript, using the Web Audio and Canvas APIs. The desktop shell uses [Electron](https://github.com/electron/electron/blob/main/LICENSE), and packaging uses [electron-builder](https://github.com/electron-userland/electron-builder/blob/master/LICENSE); both use the MIT licence and retain their upstream dependency notices. No machine-learning model is used.
 
 The loudness implementation follows ITU-R BS.1770-5, with generated calibration checks based on EBU Tech 3341 cases. This is not a claim of standards certification.
 

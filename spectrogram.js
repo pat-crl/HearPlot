@@ -20,6 +20,8 @@
   else root.MusicAnalyserSpectrogram = tools;
 }(typeof globalThis !== "undefined" ? globalThis : this, function createSpectrogramTools() {
   const DEFAULT_FFT_SIZE = 2048;
+  const REFERENCE_SAMPLE_RATE = 48000;
+  const MAX_DISPLAY_FFT_SIZE = 8192;
   const DEFAULT_MIN_FREQUENCY = 20;
   const DEFAULT_FRAMES_PER_SECOND = 12;
   const MIN_COLUMNS = 320;
@@ -37,6 +39,7 @@
   */
   function chooseSpectrogramSettings({
     duration = 0,
+    sampleRate = REFERENCE_SAMPLE_RATE,
     targetWidth = 0,
     targetHeight = 0,
     framesPerSecond = DEFAULT_FRAMES_PER_SECOND,
@@ -62,9 +65,13 @@
     const durationColumns = Math.ceil(safeDuration * safeFramesPerSecond);
     const requestedColumns = Math.ceil(Math.max(columnFloor, safeTargetWidth, durationColumns));
     const requestedRows = Math.ceil(Math.max(rowFloor, safeTargetHeight));
+    const rateRatio = positiveNumber(sampleRate, REFERENCE_SAMPLE_RATE) / REFERENCE_SAMPLE_RATE;
+    // Keep frequency bins comparable for high-rate recordings. A fixed 2048
+    // points at 192 kHz would put the first non-DC bin at nearly 94 Hz.
+    const fftSize = Math.min(MAX_DISPLAY_FFT_SIZE, DEFAULT_FFT_SIZE * 2 ** Math.max(0, Math.ceil(Math.log2(rateRatio))));
 
     return {
-      fftSize: DEFAULT_FFT_SIZE,
+      fftSize,
       columns: Math.min(columnCap, requestedColumns),
       rows: Math.min(rowCap, requestedRows),
     };
@@ -82,6 +89,7 @@
     const duration = source.samples.length / source.sampleRate;
     const suggested = chooseSpectrogramSettings({
       duration,
+      sampleRate: source.sampleRate,
       targetWidth: options.targetWidth,
       targetHeight: options.targetHeight,
       framesPerSecond: options.framesPerSecond,
@@ -104,6 +112,10 @@
     const real = new Float32Array(fftSize);
     const imaginary = new Float32Array(fftSize);
     const magnitudes = new Float32Array(fftSize / 2);
+    // The same logarithmic frequency mapping applies to every time column.
+    const rowBins = Float64Array.from({ length: rows }, (_, row) => (
+      frequencyForRow(row, rows, minFrequency, nyquist) / nyquist
+    ) * (magnitudes.length - 1));
     const window = createHannWindow(fftSize);
     const halfWindow = Math.floor(fftSize / 2);
     let peakDb = MIN_DECIBELS;
@@ -127,14 +139,14 @@
       fft(real, imaginary);
 
       for (let bin = 0; bin < magnitudes.length; bin += 1) {
-        magnitudes[bin] = Math.hypot(real[bin], imaginary[bin]);
+        // Float32 values are squared as Float64, where their squares fit.
+        magnitudes[bin] = Math.sqrt(real[bin] * real[bin] + imaginary[bin] * imaginary[bin]);
       }
 
       // Logarithmic rows devote much more screen space to bass and mid-range
       // frequencies, which is more useful for music than a linear frequency axis.
       for (let row = 0; row < rows; row += 1) {
-        const frequency = frequencyForRow(row, rows, minFrequency, nyquist);
-        const exactBin = (frequency / nyquist) * (magnitudes.length - 1);
+        const exactBin = rowBins[row];
         const lowerBin = Math.floor(exactBin);
         const upperBin = Math.min(lowerBin + 1, magnitudes.length - 1);
         const blend = exactBin - lowerBin;
@@ -275,6 +287,8 @@
   return {
     analyseSpectrogram,
     chooseSpectrogramSettings,
+    createHannWindow,
+    fft,
     frequencyForRow,
     rowForFrequency,
     DEFAULT_FFT_SIZE,

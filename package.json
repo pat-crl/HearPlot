@@ -1,6 +1,6 @@
 {
   "name": "music-analyser",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "author": "Pat Carroll",
   "description": "A spectrogram annotation platform for close listening, music education and precise feedback on recordings.",
   "main": "main.cjs",
@@ -8,7 +8,8 @@
     "start": "electron .",
     "build": "electron-builder --mac",
     "test": "node --test tests/*.test.cjs",
-    "sync:legal": "node scripts/sync-legal-docs.cjs"
+    "sync:legal": "node scripts/sync-legal-docs.cjs",
+    "test:integration": "electron scripts/test-renderer.cjs"
   },
   "build": {
     "appId": "com.patrickcarroll.music-analyser",
@@ -20,11 +21,20 @@
       "tempo.js",
       "spectrogram.js",
       "metronome.js",
+      "session.js",
+      "storage.js",
       "app.js",
       "legal-content.js",
       "main.cjs",
       "preload.cjs",
-      "assets/**/*"
+      "assets/**/*",
+      "metadata.cjs",
+      "analysis-client.js",
+      "analysis-worker.js",
+      "analysis-core.js",
+      "audio-decode.js",
+      "mix-analysis.js",
+      "mix-lab.js"
     ],
     "mac": {
       "category": "public.app-category.music",
@@ -32,7 +42,7 @@
     }
   },
   "devDependencies": {
-    "electron": "^43.1.0",
-    "electron-builder": "^26.0.12"
+    "electron": "^43.8.10",
+    "electron-builder": "^26.18.1"
   }
 }

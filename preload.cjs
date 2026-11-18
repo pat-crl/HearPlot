@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld("musicAnalyserNative", {
   loadAudioFile(filePath) {
     return ipcRenderer.invoke("audio:load-file", filePath);
   },
+  saveJsonFile(name, json) {
+    return ipcRenderer.invoke("session:save-json", name, json);
+  },
   onMenuAction(callback) {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on("menu:action", listener);

@@ -31,6 +31,7 @@ const CATEGORY_HUES = [219, 46, 145, 188, 252, 331, 13];
 // Arrangement colours use the same family as the spectrogram and annotation
 // palette, but sections keep their own colour so they do not imply a category.
 const SECTION_COLOURS = ["#3977ff", "#f4c95d", "#41c77a", "#32c4d8", "#8b6de9", "#f072a9", "#f0744f"];
+const SECTION_COLOUR_NAMES = ["Blue", "Gold", "Green", "Cyan", "Violet", "Pink", "Orange"];
 // The preset edges follow common mix-engineering bands. The steep filter chain
 // below makes them useful for listening, while the soft overlay shows the area.
 const BAND_PRESETS = {
@@ -55,13 +56,10 @@ const METRONOME_TRANSPORT_POLL_MS = 20;
 const METRONOME_TRANSPORT_CONFIRM_SECONDS = 0.04;
 const METRONOME_TRANSPORT_TOLERANCE_SECONDS = 0.012;
 const METRONOME_ANCHOR_TOLERANCE_SECONDS = 0.06;
-// The standards-based measurement maths lives in loudness.js so it can be
-// tested independently from the rest of this interface.
-const { analyseLoudness } = window.MusicAnalyserLoudness;
-// Tempo, spectrogram, and metronome maths live in small separate files so their
-// results can be checked without relying only on visual or listening tests.
-const { analyseTempo, snapRangeToBarStarts } = window.MusicAnalyserTempo;
-const { analyseSpectrogram, chooseSpectrogramSettings } = window.MusicAnalyserSpectrogram;
+const { snapRangeToBarStarts } = window.MusicAnalyserTempo;
+const { chooseSpectrogramSettings } = window.MusicAnalyserSpectrogram;
+const { run: runAnalysis } = window.MusicAnalyserAnalysis;
+const { checkEncodedSize, prepareRecording } = window.MusicAnalyserDecode;
 const {
   playbackAnchorIsCurrent,
   playbackSnapshotCanSchedule,
@@ -69,11 +67,27 @@ const {
   transportAdvanceIsConfirmed,
 } = window.MusicAnalyserMetronome;
 const nativeAudioApi = window.musicAnalyserNative || null;
+const { normaliseAnalysis, normaliseSelection, validateSession, sessionMatchesAudio } = window.MusicAnalyserSession;
+const storage = window.MusicAnalyserStorage.createResilientStorage(() => localStorage, () => {
+  const warning = document.querySelector("#storageWarning");
+  if (warning) warning.hidden = false;
+});
+let audioLoadGeneration = 0;
+let sessionLoadGeneration = 0;
+let audioLoadInProgress = false;
+let recordingAnalysisController = null;
+let tempoAnalysisController = null;
+let spectrumDetail = null;
+const waveformEnvelopes = new WeakMap();
+let auditionGeneration = 0;
 
 const state = {
   audioBuffer: null,
   audioUrl: null,
   fileIdentity: null,
+  projectWriteKey: null,
+  hasRoundedTimestamp: false,
+  alternateAutosave: null,
   legacyFileIdentity: null,
   filePath: "",
   fileName: "",
@@ -96,8 +110,8 @@ const state = {
   hoveredAnnotation: null,
   hoveredCard: null,
   selectedAnnotationId: null,
-  showHoverRegions: localStorage.getItem("music-analyser-hover-regions") !== "off",
-  showAnnotationRegions: localStorage.getItem("music-analyser-show-annotations") === "on",
+  showHoverRegions: storage.getItem("music-analyser-hover-regions") !== "off",
+  showAnnotationRegions: storage.getItem("music-analyser-show-annotations") === "on",
   // Bar lines can be made quieter without reducing the finer beat reference.
   barMarkerOpacity: storedBarMarkerOpacity(),
   meterContext: null,
@@ -108,7 +122,7 @@ const state = {
   meterLevels: [0, 0],
   // The metronome follows the musical grid, but only makes sound while the
   // recording itself is playing and the listener has explicitly turned it on.
-  metronomeEnabled: localStorage.getItem("music-analyser-metronome") === "on",
+  metronomeEnabled: storage.getItem("music-analyser-metronome") === "on",
   metronomeTimer: null,
   metronomeScheduledThrough: null,
   metronomeScheduledClicks: new Set(),
@@ -125,8 +139,8 @@ const state = {
   auditionPlaybackMode: null,
   auditionLoop: false,
   auditionStopTimer: null,
-  playbackRate: Number(localStorage.getItem("music-analyser-playback-rate")) || 1,
-  annotationPrompts: localStorage.getItem("music-analyser-annotation-prompts") === "on",
+  playbackRate: [0.5, 0.75, 1, 1.25].includes(Number(storage.getItem("music-analyser-playback-rate"))) ? Number(storage.getItem("music-analyser-playback-rate")) : 1,
+  annotationPrompts: storage.getItem("music-analyser-annotation-prompts") === "on",
   activePromptId: null,
   activeBandPreset: null,
   isFocusedView: false,
@@ -140,7 +154,6 @@ const state = {
   rhythmGrid: null,
   detectedRhythmGrid: null,
   spectrogramRaster: null,
-  spectrogramDetailTimer: null,
 };
 
 // Keeping page references together makes later functions shorter and easier to read.
@@ -153,6 +166,7 @@ const ui = {
   emptyState: document.querySelector("#emptyState"),
   analysisState: document.querySelector("#analysisState"),
   projectStatus: document.querySelector("#projectStatus"),
+  projectRecoveryWarning: document.querySelector("#projectRecoveryWarning"),
   statusGroup: document.querySelector(".topbar__status"),
   newAnalysisButton: document.querySelector("#newAnalysisButton"),
   loadSessionButton: document.querySelector("#loadSessionButton"),
@@ -266,6 +280,14 @@ const ui = {
 let toastTimer = null;
 // The same dialog is used by File > Save Session and the visible share action.
 let sessionExportMode = "save";
+const mixLab = window.MusicAnalyserMixLab?.create({
+  mainAudio: ui.audio,
+  pauseMain: pauseAudioTransport,
+  getVolume: () => Number(ui.volumeSlider.value),
+  onChange: saveProject,
+  saveJson: saveJsonExport,
+  notify: showToast,
+});
 
 function showToast(message) {
   ui.toast.textContent = message;
@@ -283,32 +305,40 @@ function setProjectStatus(message) {
 
 // A history snapshot is deliberately small: it stores the editable analysis,
 // not the decoded audio, canvases, or playback state.
-function analysisSnapshot() {
+function analysisSnapshot(includeSessionDetails = false) {
   return JSON.stringify({
     annotations: state.annotations,
     sections: state.sections,
     categories: state.categories,
     rhythmGrid: state.rhythmGrid,
+    ...(includeSessionDetails && {
+      artistName: state.artistName,
+      trackTitle: state.trackTitle,
+      audioDownloadUrl: state.audioDownloadUrl,
+      mixLab: mixLab?.getSessionData() ?? null,
+    }),
   });
 }
 
-function rememberUndoPoint() {
-  const snapshot = analysisSnapshot();
+function rememberUndoPoint(includeSessionDetails = false) {
+  const snapshot = analysisSnapshot(includeSessionDetails);
   if (state.undoStack.at(-1) !== snapshot) state.undoStack.push(snapshot);
   if (state.undoStack.length > 80) state.undoStack.shift();
   state.redoStack = [];
 }
 
-function restoreHistorySnapshot(snapshot) {
-  const saved = JSON.parse(snapshot);
-  state.annotations = Array.isArray(saved.annotations) ? saved.annotations.map(normaliseAnnotation) : [];
-  state.sections = Array.isArray(saved.sections) ? saved.sections.filter(isUsableSelection).map(normaliseSection) : [];
-  state.categories = Array.isArray(saved.categories) ? [...new Set([...DEFAULT_CATEGORIES, ...saved.categories])] : [...DEFAULT_CATEGORIES];
+function restoreHistorySnapshot(saved) {
+  const clean = normaliseAnalysis(saved, analysisBounds());
+  state.annotations = clean.annotations;
+  state.sections = clean.sections;
+  state.categories = clean.categories;
   if (isUsableRhythmGrid(saved.rhythmGrid)) state.rhythmGrid = normaliseRhythmGrid(saved.rhythmGrid);
-  state.selection = null;
-  state.selectedAnnotationId = null;
-  state.editingId = null;
-  state.pendingAttachmentId = null;
+  resetAnalysisEditor();
+  if (typeof saved.artistName === "string") state.artistName = saved.artistName;
+  if (typeof saved.trackTitle === "string") state.trackTitle = saved.trackTitle;
+  if (typeof saved.audioDownloadUrl === "string") state.audioDownloadUrl = normaliseSharedAudioUrl(saved.audioDownloadUrl);
+  syncTrackIdentity();
+  if (Object.hasOwn(saved, "mixLab")) mixLab?.restoreSessionData(saved.mixLab);
   renderCategoryOptions();
   syncRhythmGridUi();
   drawTimeRuler();
@@ -322,16 +352,18 @@ function restoreHistorySnapshot(snapshot) {
 function undoAnalysis() {
   const previous = state.undoStack.pop();
   if (!previous) return showToast("nothing to undo");
-  state.redoStack.push(analysisSnapshot());
-  restoreHistorySnapshot(previous);
+  const saved = JSON.parse(previous);
+  state.redoStack.push(analysisSnapshot(Object.hasOwn(saved, "mixLab")));
+  restoreHistorySnapshot(saved);
   showToast("undone");
 }
 
 function redoAnalysis() {
   const next = state.redoStack.pop();
   if (!next) return showToast("nothing to redo");
-  state.undoStack.push(analysisSnapshot());
-  restoreHistorySnapshot(next);
+  const saved = JSON.parse(next);
+  state.undoStack.push(analysisSnapshot(Object.hasOwn(saved, "mixLab")));
+  restoreHistorySnapshot(saved);
   showToast("redone");
 }
 
@@ -339,7 +371,7 @@ function redoAnalysis() {
 function applyTheme(theme) {
   ui.root.dataset.theme = theme;
   ui.themeButton.textContent = theme === "night" ? "[ ● night ]" : "[ ○ day ]";
-  localStorage.setItem("music-analyser-theme", theme);
+  storage.setItem("music-analyser-theme", theme);
   if (state.audioBuffer) {
     drawWaveform();
     drawSpectrogram();
@@ -347,7 +379,7 @@ function applyTheme(theme) {
   }
 }
 
-applyTheme(localStorage.getItem("music-analyser-theme") || "day");
+applyTheme(storage.getItem("music-analyser-theme") || "day");
 
 // ---------- 2. Loading and decoding audio ----------
 
@@ -366,70 +398,81 @@ ui.audioInput.addEventListener("change", async (event) => {
   ui.audioDropzone.classList.remove("is-dragging");
 }));
 ui.audioDropzone.addEventListener("drop", async (event) => {
-  const file = [...event.dataTransfer.files].find((candidate) => candidate.type.startsWith("audio/"));
+  const file = [...event.dataTransfer.files].find((candidate) => candidate.type.startsWith("audio/") || /\.(wav|aif[fc]?|flac|mp3|m4a|alac|aac|ogg|opus|webm|mp4|weba)$/i.test(candidate.name));
   if (file) await loadAudioFile(file);
   else showToast("drop an audio file here");
 });
 
 async function loadAudioFile(file, nativeDetails = {}) {
+  const generation = nativeDetails.generation ?? ++audioLoadGeneration;
+  if (generation !== audioLoadGeneration) return false;
+  const current = () => generation === audioLoadGeneration;
+  cancelRecordingAnalysis();
+  const controller = new AbortController();
+  recordingAnalysisController = controller;
+  audioLoadInProgress = true;
   setProjectStatus("decoding recording…");
   showToast("decoding recording…");
-  // A previous recording may still be playing while a new file is chosen.
-  // Stop both transports before replacing their shared timeline.
   pauseAudioTransport();
-
   try {
+    checkEncodedSize(file.size);
     const nativePath = nativeDetails.path || await pathForFile(file);
     const metadata = nativeDetails.metadata || await metadataForPath(nativePath);
-    const rawAudio = await file.arrayBuffer();
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    const audioContext = new AudioContextClass();
-    const decoded = await audioContext.decodeAudioData(rawAudio.slice(0));
-    await audioContext.close();
+    if (!current()) return false;
+    const { buffer: decoded, playback } = await prepareRecording(file, controller.signal);
+    if (!current()) return false;
+    if (!(decoded.duration > 0) || !Number.isFinite(decoded.duration)) throw new Error("Empty recording");
+    const artwork = typeof metadata.artwork === "string" && /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(metadata.artwork) ? metadata.artwork : "";
+    const thumbnail = await createArtworkThumbnail(artwork);
+    if (!current()) return false;
+    // Prepare every fallible calculation before replacing the working analysis.
+    setProjectStatus("preparing audio analysis…");
+    const { spectrum, tempo, loudness, waveform } = await runAnalysis("recording", decoded, {
+      settings: spectrogramSettingsForViewport(decoded),
+      signal: controller.signal,
+      onProgress: (_fraction, stage) => {
+        if (current()) setProjectStatus(`analysing ${stage}…`);
+      },
+    });
+    if (!current()) return false;
+    const detectedGrid = normaliseRhythmGrid(tempo);
+    const raster = createSpectrogramRaster(spectrum);
+    const parsedIdentity = parseTrackIdentity(file.name.replace(/\.[^.]+$/, ""));
+    if (!current()) return false;
 
-    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-    state.audioUrl = URL.createObjectURL(file);
+    resetAnalysisEditor();
+    regionEntry.open = false;
+    const oldUrl = state.audioUrl;
+    state.audioUrl = URL.createObjectURL(playback);
     state.audioBuffer = decoded;
+    waveformEnvelopes.set(decoded, waveform);
     state.fileName = file.name.replace(/\.[^.]+$/, "");
     state.filePath = nativePath || "";
+    state.hasRoundedTimestamp = metadata.roundedLastModified === file.lastModified + 1;
     state.legacyFileIdentity = `${file.name}::${file.size}::${file.lastModified}`;
     state.fileIdentity = state.filePath ? `${state.filePath}::${file.size}::${file.lastModified}` : state.legacyFileIdentity;
-    const parsedIdentity = parseTrackIdentity(state.fileName);
-    state.artistName = metadata.artist || metadata.albumArtist || parsedIdentity.artist;
-    state.trackTitle = metadata.title || parsedIdentity.title;
-    state.artworkDataUrl = metadata.artwork || "";
-    state.artworkThumbnailDataUrl = await createArtworkThumbnail(state.artworkDataUrl);
+    state.artistName = typeof metadata.artist === "string" && metadata.artist || typeof metadata.albumArtist === "string" && metadata.albumArtist || parsedIdentity.artist;
+    state.trackTitle = typeof metadata.title === "string" && metadata.title || parsedIdentity.title;
+    state.artworkDataUrl = artwork;
+    state.artworkThumbnailDataUrl = thumbnail;
     state.audioDownloadUrl = "";
-    state.selection = null;
+    state.annotations = [];
     state.sections = [];
-    state.hoveredAnnotation = null;
-    state.hoveredCard = null;
-    state.selectedAnnotationId = null;
-    state.editingId = null;
-    state.pendingAttachmentId = null;
     state.undoStack = [];
     state.redoStack = [];
-    state.spectrogramRaster = null;
-
-    // These are whole-track calculations, so the status changes before they
-    // begin. Yielding one frame lets Electron paint that message first.
-    setProjectStatus("analysing tempo, loudness and spectrum…");
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    const detectedGrid = normaliseRhythmGrid(analyseTempo(decoded));
+    state.drag = null;
+    state.lastCreatedAnnotationId = null;
     state.detectedRhythmGrid = { ...detectedGrid, confidence: { ...detectedGrid.confidence } };
     state.rhythmGrid = { ...detectedGrid, confidence: { ...detectedGrid.confidence } };
-    const spectrumSettings = spectrogramSettingsForViewport(decoded.duration);
-    installSpectrogramData(analyseSpectrogram(decoded, spectrumSettings));
-    const loudness = analyseLoudness(decoded);
-
+    installSpectrogramData(spectrum, raster);
     ui.audio.src = state.audioUrl;
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
     ui.audio.volume = Number(ui.volumeSlider.value);
-    // Chromium performs its built-in real-time time stretch when playbackRate
-    // changes. Explicit pitch preservation keeps musical pitch stable.
     ui.audio.preservesPitch = true;
     ui.audio.playbackRate = state.playbackRate;
     ui.playbackSpeedSelect.value = String(state.playbackRate);
     ui.seekSlider.max = String(decoded.duration);
+    ui.seekSlider.value = "0";
     ui.durationValue.textContent = formatTime(decoded.duration, false);
     ui.sampleRateValue.textContent = `${(decoded.sampleRate / 1000).toFixed(1)} khz`;
     ui.peakLevelValue.textContent = formatDecibels(loudness.peakDb);
@@ -442,33 +485,52 @@ async function loadAudioFile(file, nativeDetails = {}) {
     ui.statusGroup.classList.add("is-active");
     ui.emptyState.hidden = true;
     ui.analysisState.hidden = false;
-
     restoreProject();
     if (state.pendingSession) {
-      applySessionData(state.pendingSession);
-      state.pendingSession = null;
+      const session = state.pendingSession;
+      // Loading a session before its audio must perform the same mismatch check.
+      if (sessionMatchesAudio(session, decoded.duration, state.fileName) || window.confirm("This session appears to belong to a different recording. Load its annotations anyway?")) {
+        applySessionData(session);
+        state.pendingSession = null;
+        if (ui.sharedAudioDialog.open) ui.sharedAudioDialog.close();
+      } else {
+        showToast("session kept waiting for the matching recording");
+      }
     }
     syncTrackIdentity();
-    // Saving immediately makes artwork and the zero-note project appear in
-    // Recent Analyses before the listener writes their first annotation.
     saveProject();
     renderCategoryOptions();
     syncRhythmGridUi();
     renderTimeline();
     updateSelectionDisplay();
-
-    // The page needs one layout frame before canvas widths can be measured correctly.
     requestAnimationFrame(() => {
+      if (!current()) return;
       drawAllVisuals();
-      showToast("recording ready");
+      ensureSpectrogramDetail();
+      if (!state.pendingSession) showToast("recording ready");
     });
+    return true;
   } catch (error) {
-    console.error("Audio decoding failed:", error);
-    setProjectStatus("could not load recording");
-    showToast("could not decode this audio file");
+    if (!current()) return false;
+    console.warn("Recording import failed:", error.name);
+    if (state.audioBuffer) syncTrackIdentity();
+    else setProjectStatus("could not load recording");
+    if (error instanceof RangeError || error.name === "AudioFormatError") showToast(error.message);
+    else showToast(state.audioBuffer ? "could not analyse this audio file — previous analysis kept" : "could not analyse this audio file — choose another recording");
+    return false;
   } finally {
-    ui.audioInput.value = "";
+    if (recordingAnalysisController === controller) recordingAnalysisController = null;
+    if (current()) {
+      audioLoadInProgress = false;
+      ui.audioInput.value = "";
+    }
   }
+}
+
+function cancelRecordingAnalysis() {
+  recordingAnalysisController?.abort();
+  tempoAnalysisController?.abort();
+  cancelSpectrogramDetail();
 }
 
 async function pathForFile(file) {
@@ -506,9 +568,10 @@ async function createArtworkThumbnail(dataUrl) {
 }
 
 function parseTrackIdentity(fileName) {
-  const parts = fileName.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  const withoutTrackNumber = fileName.replace(/^\d{1,3}\s*[-._]\s*/, "");
+  const parts = withoutTrackNumber.split(/\s+[-–—]\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length >= 2) return { artist: parts.shift(), title: parts.join(" — ") };
-  return { artist: "unknown artist", title: fileName || "untitled track" };
+  return { artist: "unknown artist", title: withoutTrackNumber || "untitled track" };
 }
 
 function syncTrackIdentity() {
@@ -518,21 +581,44 @@ function syncTrackIdentity() {
   ui.artworkFrame.hidden = !state.artworkDataUrl;
   ui.albumArtwork.src = state.artworkDataUrl || "";
   ui.albumArtwork.alt = state.artworkDataUrl ? `${state.artistName} ${state.trackTitle} artwork` : "";
+  mixLab?.setPrimary(state.audioBuffer, state.audioUrl, `${state.artistName} · ${state.trackTitle}`);
 }
 
 [ui.artistName, ui.trackTitle].forEach((input) => input.addEventListener("input", () => {
   state.artistName = ui.artistName.value.trim() || "unknown artist";
   state.trackTitle = ui.trackTitle.value.trim() || state.fileName || "untitled track";
   setProjectStatus(`${state.artistName} · ${state.trackTitle}`);
+  mixLab?.setPrimary(state.audioBuffer, state.audioUrl, `${state.artistName} · ${state.trackTitle}`);
   saveProject();
 }));
 
 ui.newAnalysisButton.addEventListener("click", () => {
   ui.audioInput.click();
 });
+document.querySelector("#chooseRecordingButton").addEventListener("click", () => ui.audioInput.click());
 
 ui.saveSessionButton.addEventListener("click", () => openSessionExportDialog("save"));
 ui.shareAnalysisButton.addEventListener("click", () => openSessionExportDialog("share"));
+const sessionMenu = document.querySelector("#sessionMenu");
+const sessionMenuTrigger = sessionMenu.querySelector("summary");
+let sessionDialogReturnFocus;
+sessionMenu.addEventListener("click", (event) => {
+  if (!event.target.closest("button")) return;
+  sessionMenu.open = false;
+  if (!ui.sessionShareDialog.open) sessionMenuTrigger.focus();
+});
+document.addEventListener("click", (event) => {
+  if (!sessionMenu.contains(event.target)) sessionMenu.open = false;
+});
+sessionMenu.addEventListener("focusout", (event) => {
+  if (event.relatedTarget && !sessionMenu.contains(event.relatedTarget)) sessionMenu.open = false;
+});
+sessionMenu.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !sessionMenu.open) return;
+  event.preventDefault();
+  sessionMenu.open = false;
+  sessionMenuTrigger.focus();
+});
 
 // Session files hold the editable analysis, while the matching audio stays in
 // the sender's own cloud folder or storage service.
@@ -544,17 +630,16 @@ function buildSessionData() {
     audioDownloadUrl: state.audioDownloadUrl || null,
     track: {
       fileName: state.fileName,
-      fileIdentity: state.fileIdentity,
       duration: state.audioBuffer.duration,
       sampleRate: state.audioBuffer.sampleRate,
       artist: state.artistName,
       title: state.trackTitle,
-      filePath: state.filePath,
     },
     categories: state.categories,
     annotations: state.annotations,
     sections: state.sections,
     rhythmGrid: state.rhythmGrid,
+    mixLab: mixLab?.getSessionData() ?? null,
   };
 }
 
@@ -565,21 +650,22 @@ function openSessionExportDialog(mode) {
   ui.sessionAudioLinkInput.setCustomValidity("");
   ui.sessionShareDialogTitle.textContent = mode === "share" ? "share editable session" : "save session";
   ui.sessionShareSubmit.textContent = mode === "share" ? "share JSON session" : "save JSON session";
-  if (!ui.sessionShareDialog.open) ui.sessionShareDialog.showModal();
-  window.setTimeout(() => ui.sessionAudioLinkInput.focus(), 0);
+  if (!ui.sessionShareDialog.open) {
+    const active = document.activeElement;
+    sessionDialogReturnFocus = sessionMenu.contains(active) || sessionMenu.open ? sessionMenuTrigger : active;
+    ui.sessionShareDialog.showModal();
+  }
+  ui.sessionAudioLinkInput.focus();
 }
+ui.sessionShareDialog.addEventListener("close", () => {
+  sessionDialogReturnFocus?.focus({ preventScroll: true });
+  sessionDialogReturnFocus = null;
+});
 
 // Only web links are allowed here. This prevents a hand-edited session from
 // turning the download button into a local-file or script link.
 function normaliseSharedAudioUrl(value) {
-  const rawUrl = String(value || "").trim();
-  if (!rawUrl) return "";
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === "https:" ? url.href : "";
-  } catch {
-    return "";
-  }
+  return window.MusicAnalyserSession.normaliseSharedAudioUrl(value);
 }
 
 function sessionAudioDownloadUrl(session) {
@@ -597,40 +683,54 @@ ui.sessionShareForm.addEventListener("submit", async (event) => {
   const suppliedUrl = ui.sessionAudioLinkInput.value.trim();
   const audioDownloadUrl = normaliseSharedAudioUrl(suppliedUrl);
   if (suppliedUrl && !audioDownloadUrl) {
-    ui.sessionAudioLinkInput.setCustomValidity("Use a full https:// link to the audio file.");
+    ui.sessionAudioLinkInput.setCustomValidity("Use an HTTPS audio link without an embedded username or password.");
     ui.sessionAudioLinkInput.reportValidity();
     return;
   }
 
-  state.audioDownloadUrl = audioDownloadUrl;
-  saveProject();
+  const origin = state.audioBuffer;
   ui.sessionShareDialog.close();
-  await exportSessionFile(sessionExportMode);
+  try {
+    if (await exportSessionFile(sessionExportMode, audioDownloadUrl) && state.audioBuffer === origin) {
+      state.audioDownloadUrl = audioDownloadUrl;
+      saveProject();
+    }
+  } catch {
+    showToast("could not save the session — choose another location");
+  }
 });
 
-async function exportSessionFile(mode) {
+async function exportSessionFile(mode, audioDownloadUrl = state.audioDownloadUrl) {
   const fileName = `${safeAnalysisName()}.json`;
-  const blob = new Blob([JSON.stringify(buildSessionData(), null, 2)], { type: "application/json" });
+  const json = JSON.stringify({ ...buildSessionData(), audioDownloadUrl: audioDownloadUrl || null }, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
   if (mode === "share") {
     const file = new File([blob], fileName, { type: "application/json" });
     try {
       if (navigator.share && navigator.canShare?.({ files: [file] })) {
         await navigator.share({ title: `${state.artistName} — ${state.trackTitle}`, text: "Editable Music Analyser session", files: [file] });
         showToast("JSON session shared");
-        return;
+        return true;
       }
     } catch (error) {
-      if (error.name === "AbortError") return;
+      if (error.name === "AbortError") return false;
       console.warn("Native session sharing was unavailable:", error);
     }
   }
 
-  downloadBlob(blob, fileName);
-  showToast(mode === "share" ? "shareable JSON session saved" : "session saved as JSON");
+  const saved = await saveJsonExport(fileName, json);
+  if (saved) showToast(mode === "share" ? "shareable JSON session saved" : "session saved as JSON");
+  return saved;
+}
+
+async function saveJsonExport(name, json) {
+  if (nativeAudioApi?.saveJsonFile) return nativeAudioApi.saveJsonFile(name, json);
+  downloadBlob(new Blob([json], { type: "application/json" }), name);
+  return true;
 }
 
 function safeAnalysisName() {
-  return `${state.artistName}-${state.trackTitle}`.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "music-analysis";
+  return `${state.artistName}-${state.trackTitle}`.replace(/[^a-z0-9-_]+/gi, "-").slice(0, 120).replace(/^-|-$/g, "").toLowerCase() || "music-analysis";
 }
 
 function downloadBlob(blob, fileName) {
@@ -655,14 +755,20 @@ nativeAudioApi?.onMenuAction?.((action) => {
   if (action === "save-session" && !ui.saveSessionButton.disabled) ui.saveSessionButton.click();
 });
 
-ui.sessionInput.addEventListener("change", async (event) => {
+ui.sessionInput.addEventListener("change", (event) => {
   const [file] = event.target.files;
-  if (!file) return;
-  try {
-    const session = JSON.parse(await file.text());
-    if (session?.format !== "music-analyser-session" || !Array.isArray(session.annotations)) throw new Error("Unsupported session format");
+  if (file) void importSessionFile(file);
+});
 
-    if (!state.audioBuffer) {
+async function importSessionFile(file) {
+  const generation = ++sessionLoadGeneration;
+  try {
+    if (file.size > 16 * 1024 * 1024) throw new Error("Session exceeds 16 MiB");
+    const contents = await file.text();
+    if (generation !== sessionLoadGeneration) return;
+    const session = validateSession(JSON.parse(contents));
+
+    if (!state.audioBuffer || audioLoadInProgress) {
       state.pendingSession = session;
       setProjectStatus(`session ready · drop ${session.track?.fileName || "the matching audio file"}`);
       if (showSharedAudioDialog(session)) {
@@ -671,25 +777,28 @@ ui.sessionInput.addEventListener("change", async (event) => {
         showToast("session loaded — now drop the matching audio file");
       }
     } else {
-      const durationMatches = Math.abs((session.track?.duration || 0) - state.audioBuffer.duration) < 1;
+      const durationMatches = sessionMatchesAudio(session, state.audioBuffer.duration, state.fileName);
       if (!durationMatches && !window.confirm("This session appears to belong to a different recording. Load its annotations anyway?")) return;
-      applySessionData(session);
-      syncTrackIdentity();
-      renderCategoryOptions();
-      renderTimeline();
-      showToast("session restored");
+      state.pendingSession = null;
+      if (ui.sharedAudioDialog.open) ui.sharedAudioDialog.close();
+      const clean = applySessionData(session);
+      showToast(clean.skipped ? `session restored · ${clean.skipped} invalid regions skipped` : "session restored");
     }
   } catch (error) {
-    console.warn("Session import failed:", error);
-    showToast("this JSON file is not a valid session");
+    if (generation !== sessionLoadGeneration) return;
+    console.warn("Session import failed:", error.name);
+    showToast(file.size > 16 * 1024 * 1024 ? "session exceeds the 16 MiB limit" : "this JSON file is not a supported session");
   } finally {
-    ui.sessionInput.value = "";
+    if (generation === sessionLoadGeneration) ui.sessionInput.value = "";
   }
-});
+}
 
 function showSharedAudioDialog(session) {
   const audioDownloadUrl = sessionAudioDownloadUrl(session);
-  if (!audioDownloadUrl) return false;
+  if (!audioDownloadUrl) {
+    if (ui.sharedAudioDialog.open) ui.sharedAudioDialog.close();
+    return false;
+  }
   ui.sharedAudioDownloadLink.href = audioDownloadUrl;
   if (!ui.sharedAudioDialog.open) ui.sharedAudioDialog.showModal();
   return true;
@@ -701,26 +810,42 @@ ui.sharedAudioChooseButton.addEventListener("click", () => {
   ui.audioInput.click();
 });
 
-function applySessionData(session) {
-  state.annotations = session.annotations
-    .filter((annotation) => Number.isFinite(annotation.start) && Number.isFinite(annotation.end))
-    .map(normaliseAnnotation);
-  state.sections = Array.isArray(session.sections)
-    ? session.sections.filter(isUsableSelection).map(normaliseSection)
-    : [];
-  // Including categories found inside notes keeps older or hand-edited session files usable.
-  const annotationCategories = state.annotations.map((annotation) => annotation.category).filter(Boolean);
-  state.categories = [...new Set([...DEFAULT_CATEGORIES, ...(Array.isArray(session.categories) ? session.categories : []), ...annotationCategories])];
-  state.artistName = session.track?.artist || state.artistName;
-  state.trackTitle = session.track?.title || state.trackTitle;
-  state.filePath = session.track?.filePath || state.filePath;
-  state.audioDownloadUrl = sessionAudioDownloadUrl(session);
-  if (isUsableRhythmGrid(session.rhythmGrid)) state.rhythmGrid = normaliseRhythmGrid(session.rhythmGrid);
+function analysisBounds() {
+  return { duration: state.audioBuffer?.duration ?? Infinity, sampleRate: state.audioBuffer?.sampleRate ?? 48000 };
+}
+
+function resetAnalysisEditor() {
+  pauseAudioTransport();
   state.selection = null;
   state.selectedAnnotationId = null;
-  syncRhythmGridUi();
+  state.hoveredAnnotation = null;
+  state.hoveredCard = null;
+  state.editingId = null;
+  state.pendingAttachmentId = null;
+  ui.noteInput.value = "";
+  ui.addButton.innerHTML = "add annotation <span>↵</span>";
+  closeQuickNote();
+  hideHoverConnector();
+}
+
+function applySessionData(session) {
+  const clean = normaliseAnalysis(session, analysisBounds());
+  rememberUndoPoint(true);
+  resetAnalysisEditor();
+  state.annotations = clean.annotations;
+  state.sections = clean.sections;
+  state.categories = clean.categories;
+  if (typeof session.track?.artist === "string" && session.track.artist.trim()) state.artistName = session.track.artist;
+  if (typeof session.track?.title === "string" && session.track.title.trim()) state.trackTitle = session.track.title;
+  // The selected local recording owns its path and identity. A portable session cannot replace either.
+  state.audioDownloadUrl = sessionAudioDownloadUrl(session);
+  if (isUsableRhythmGrid(session.rhythmGrid)) state.rhythmGrid = normaliseRhythmGrid(session.rhythmGrid);
+  syncTrackIdentity();
+  mixLab?.restoreSessionData(session.mixLab);
+  renderCategoryOptions();
+  refreshRhythmGridViews();
   saveProject();
-  resyncMetronome();
+  return clean;
 }
 
 // Arrangement markers use only a time span and a chapter name. Keeping their
@@ -741,27 +866,16 @@ function sectionColour(colour) {
 }
 
 function normaliseAnnotation(annotation) {
-  return {
-    ...annotation,
-    links: Array.isArray(annotation.links)
-      ? annotation.links.filter(isUsableSelection).map(normaliseLinkedSelection)
-      : [],
-  };
+  return normaliseAnalysis({ annotations: [annotation] }, analysisBounds()).annotations[0] || null;
 }
 
 function isUsableSelection(selection) {
-  return Number.isFinite(selection?.start) && Number.isFinite(selection?.end) && selection.end > selection.start;
+  return normaliseSelection(selection, analysisBounds()) !== null;
 }
 
 function normaliseLinkedSelection(selection) {
-  return {
-    id: selection.id || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`),
-    start: selection.start,
-    end: selection.end,
-    source: selection.source === "spectrogram" ? "spectrogram" : "waveform",
-    minFrequency: selection.source === "spectrogram" ? selection.minFrequency : null,
-    maxFrequency: selection.source === "spectrogram" ? selection.maxFrequency : null,
-  };
+  const region = normaliseSelection(selection, analysisBounds());
+  return region ? { ...region, id: selection.id || crypto.randomUUID() } : null;
 }
 
 // Standard media controls update both the audio element and our visual playhead.
@@ -777,6 +891,9 @@ ui.playButton.addEventListener("click", async () => {
     state.auditionLoop = false;
     resetAuditionFilter();
     updateAuditionButtons();
+    if (state.loopSelection && state.selection && (ui.audio.currentTime < state.selection.start || ui.audio.currentTime >= state.selection.end)) {
+      seekAudioTo(state.selection.start);
+    }
     const playbackStarted = ui.audio.play();
     try {
       await Promise.all([meterReady, playbackStarted]);
@@ -789,8 +906,13 @@ ui.playButton.addEventListener("click", async () => {
   }
 });
 
+function syncTransportButton(playing) {
+  ui.playButton.textContent = playing ? "pause" : "play";
+  ui.playButton.setAttribute("aria-label", playing ? "Pause recording" : "Play recording");
+}
+
 ui.audio.addEventListener("play", () => {
-  ui.playButton.textContent = "pause";
+  syncTransportButton(true);
   startLevelMeter();
   updateAuditionButtons();
 });
@@ -807,45 +929,43 @@ ui.audio.addEventListener("playing", () => {
     void startMetronomeScheduler();
   }
 });
-ui.audio.addEventListener("pause", () => {
-  ui.playButton.textContent = "play";
+function finishPlaybackTransport() {
+  syncTransportButton(false);
   state.metronomeNeedsTransportSync = false;
   stopMetronomeScheduler();
-  clearAuditionStopTimer();
-  state.auditionAnnotationId = null;
-  state.auditionSelection = null;
-  state.auditionSelectionKey = null;
-  state.auditionPlaybackMode = null;
-  state.auditionLoop = false;
-  resetAuditionFilter();
-  updateAuditionButtons();
+  cancelRegionAudition();
   updateAnnotationPrompt();
+}
+
+ui.audio.addEventListener("pause", () => {
+  // At EOF Chromium queues pause before ended. Let ended finish or restart the active loop.
+  if (ui.audio.paused && !ui.audio.ended) finishPlaybackTransport();
 });
 ui.audio.addEventListener("ended", () => {
-  ui.playButton.textContent = "play";
-  state.metronomeNeedsTransportSync = false;
-  stopMetronomeScheduler();
-  clearAuditionStopTimer();
-  state.auditionAnnotationId = null;
-  state.auditionSelection = null;
-  state.auditionSelectionKey = null;
-  state.auditionPlaybackMode = null;
-  state.auditionLoop = false;
-  resetAuditionFilter();
-  updateAuditionButtons();
-  updateAnnotationPrompt();
+  if (!ui.audio.ended) return;
+  const loop = state.auditionSelection ? (state.auditionLoop && state.auditionSelection) : (state.loopSelection && state.selection);
+  if (loop && !state.isScrubbingSeek) {
+    seekAudioTo(loop.start);
+    const generation = auditionGeneration;
+    void ui.audio.play().then(() => {
+      if (generation === auditionGeneration) scheduleAuditionBoundary();
+    }).catch(() => {
+      if (generation === auditionGeneration) finishPlaybackTransport();
+    });
+    return;
+  }
+  finishPlaybackTransport();
 });
 
 ui.audio.addEventListener("timeupdate", () => {
   if (!state.audioBuffer) return;
 
   const audition = state.auditionSelection;
-  if (audition && ui.audio.currentTime >= audition.end) {
+  if (audition && !ui.audio.paused && ui.audio.currentTime >= audition.end) {
     handleAuditionBoundary();
-  } else if (state.loopSelection && state.selection && ui.audio.currentTime >= state.selection.end) {
+  } else if (state.loopSelection && state.selection && !ui.audio.paused && !state.isScrubbingSeek && ui.audio.currentTime >= state.selection.end) {
     // When looping is active, jump back as soon as playback reaches the selected end.
     seekAudioTo(state.selection.start);
-    if (ui.audio.paused) ui.audio.play();
   }
 
   updatePlayhead(ui.audio.currentTime);
@@ -854,6 +974,7 @@ ui.audio.addEventListener("timeupdate", () => {
 
 function beginSeekScrub() {
   if (state.isScrubbingSeek) return;
+  cancelRegionAudition();
   state.isScrubbingSeek = true;
   markMetronomeTransportUnsettled();
 }
@@ -908,7 +1029,7 @@ ui.playbackSpeedSelect.addEventListener("change", () => {
   state.playbackRate = Number(ui.playbackSpeedSelect.value) || 1;
   ui.audio.preservesPitch = true;
   ui.audio.playbackRate = state.playbackRate;
-  localStorage.setItem("music-analyser-playback-rate", String(state.playbackRate));
+  storage.setItem("music-analyser-playback-rate", String(state.playbackRate));
   if (state.auditionSelection && !ui.audio.paused) scheduleAuditionBoundary();
   showToast(`${Math.round(state.playbackRate * 100)}% playback · pitch locked`);
 });
@@ -930,7 +1051,7 @@ function syncMetronomeButton() {
 
 ui.metronomeButton.addEventListener("click", async () => {
   state.metronomeEnabled = !state.metronomeEnabled;
-  localStorage.setItem("music-analyser-metronome", state.metronomeEnabled ? "on" : "off");
+  storage.setItem("music-analyser-metronome", state.metronomeEnabled ? "on" : "off");
   syncMetronomeButton();
 
   if (!state.metronomeEnabled) {
@@ -974,7 +1095,7 @@ function syncAnnotationPromptsButton() {
 
 ui.annotationPromptsButton.addEventListener("click", () => {
   state.annotationPrompts = !state.annotationPrompts;
-  localStorage.setItem("music-analyser-annotation-prompts", state.annotationPrompts ? "on" : "off");
+  storage.setItem("music-analyser-annotation-prompts", state.annotationPrompts ? "on" : "off");
   syncAnnotationPromptsButton();
   updateAnnotationPrompt();
 });
@@ -1019,8 +1140,21 @@ function updateAnnotationPrompt() {
 
 syncAnnotationPromptsButton();
 
+function playbackNyquist() {
+  const recordedRate = state.audioBuffer?.sampleRate || 48000;
+  return Math.min(recordedRate, state.meterContext?.sampleRate || recordedRate) / 2;
+}
+
 function syncBandControls() {
+  const nyquist = playbackNyquist();
+  const recordedNyquist = (state.audioBuffer?.sampleRate || 48000) / 2;
+  if (BAND_PRESETS[state.activeBandPreset]?.min >= nyquist) {
+    state.activeBandPreset = null;
+    resetAuditionFilter();
+  }
   ui.spectrumBandControls.querySelectorAll("button[data-band]").forEach((button) => {
+    button.disabled = BAND_PRESETS[button.dataset.band].min >= nyquist;
+    button.title = button.disabled ? "This band is above the recording or audio output range." : "";
     button.setAttribute("aria-pressed", String(button.dataset.band === state.activeBandPreset));
   });
 
@@ -1029,9 +1163,8 @@ function syncBandControls() {
     ui.activeBandOverlay.hidden = true;
     return;
   }
-  const nyquist = state.audioBuffer.sampleRate / 2;
-  const top = ratioFromFrequency(Math.min(preset.max, nyquist), nyquist) * 100;
-  const bottom = ratioFromFrequency(Math.min(preset.min, nyquist), nyquist) * 100;
+  const top = ratioFromFrequency(Math.min(preset.max, nyquist), recordedNyquist) * 100;
+  const bottom = ratioFromFrequency(preset.min, recordedNyquist) * 100;
   ui.activeBandOverlay.style.top = `${top}%`;
   ui.activeBandOverlay.style.height = `${Math.max(0.5, bottom - top)}%`;
   ui.activeBandOverlay.hidden = false;
@@ -1042,13 +1175,17 @@ ui.spectrumBandControls.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-band]");
   if (!button) return;
   event.stopPropagation();
+  const meterReady = ensurePlaybackMeter();
+  if (BAND_PRESETS[button.dataset.band].min >= playbackNyquist()) {
+    void meterReady.catch(() => {});
+    return showToast("this band is above the audio output range");
+  }
   state.activeBandPreset = state.activeBandPreset === button.dataset.band ? null : button.dataset.band;
   resetAuditionFilter();
   syncBandControls();
   showToast(state.activeBandPreset ? `${button.textContent} listening band on` : "listening band off");
   try {
-    await ensurePlaybackMeter();
-    resetAuditionFilter();
+    await meterReady;
   } catch (error) {
     // The visual choice remains selected if a browser preview is still waiting
     // for audio permission; the filter is applied when playback starts.
@@ -1111,6 +1248,7 @@ async function ensurePlaybackMeter() {
     const filteredOutput = state.filterNodes[state.filterNodes.length - 1];
     filteredOutput.connect(splitter);
     filteredOutput.connect(state.meterContext.destination);
+    syncBandControls();
     resetAuditionFilter();
   }
 
@@ -1249,7 +1387,21 @@ function pauseAudioTransport() {
   // The pause event arrives later. Cancelling first prevents a click that is a
   // few milliseconds ahead from sounding after the recording has stopped.
   stopMetronomeScheduler();
+  auditionGeneration += 1;
+  clearAuditionStopTimer();
   ui.audio.pause();
+}
+
+function cancelRegionAudition() {
+  auditionGeneration += 1;
+  clearAuditionStopTimer();
+  state.auditionAnnotationId = null;
+  state.auditionSelection = null;
+  state.auditionSelectionKey = null;
+  state.auditionPlaybackMode = null;
+  state.auditionLoop = false;
+  resetAuditionFilter();
+  updateAuditionButtons();
 }
 
 /*
@@ -1414,13 +1566,9 @@ function scheduleMetronomeClick(startTime, isDownbeat) {
   oscillator.stop(endTime + 0.01);
 }
 
-function resetAuditionFilter() {
+function applyFilterEdges(lower, upper) {
   if (!state.filterNodes.length || !state.meterContext) return;
   const now = state.meterContext.currentTime;
-  const nyquist = state.meterContext.sampleRate / 2;
-  const preset = BAND_PRESETS[state.activeBandPreset];
-  const lower = preset ? Math.max(20, Math.min(nyquist * 0.95, preset.min)) : 20;
-  const upper = preset ? Math.max(lower + 10, Math.min(nyquist * 0.98, preset.max)) : nyquist * 0.98;
   state.filterNodes.forEach((filter) => {
     const frequency = filter.type === "highpass" ? lower : upper;
     filter.frequency.cancelScheduledValues(now);
@@ -1428,17 +1576,23 @@ function resetAuditionFilter() {
   });
 }
 
+function resetAuditionFilter() {
+  if (!state.meterContext) return;
+  const nyquist = playbackNyquist();
+  const preset = BAND_PRESETS[state.activeBandPreset];
+  if (preset && preset.min < nyquist) applyFilterEdges(preset.min, Math.min(nyquist, preset.max));
+  else applyFilterEdges(0, state.meterContext.sampleRate / 2);
+}
+
 function configureAuditionFilter(selection, mode) {
-  resetAuditionFilter();
-  if (mode !== "iso" || selection.source !== "spectrogram" || !state.filterNodes.length || !state.meterContext) return;
-  const now = state.meterContext.currentTime;
-  const nyquist = state.meterContext.sampleRate / 2;
-  const lower = Math.max(20, Math.min(nyquist * 0.95, selection.minFrequency));
-  const upper = Math.max(lower + 10, Math.min(nyquist * 0.98, selection.maxFrequency));
-  state.filterNodes.forEach((filter) => {
-    filter.frequency.cancelScheduledValues(now);
-    filter.frequency.setValueAtTime(filter.type === "highpass" ? lower : upper, now);
-  });
+  if (mode !== "iso" || selection.source !== "spectrogram") {
+    resetAuditionFilter();
+    return true;
+  }
+  const nyquist = playbackNyquist();
+  if (selection.minFrequency >= nyquist) return false;
+  applyFilterEdges(selection.minFrequency, Math.min(selection.maxFrequency, nyquist));
+  return true;
 }
 
 async function auditionAnnotation(annotation, mode = "full") {
@@ -1459,10 +1613,14 @@ async function auditionSelection(annotation, selection, mode = "full", shouldLoo
   }
 
   const audioReady = ensurePlaybackMeter();
+  if (!configureAuditionFilter(selection, mode)) {
+    void audioReady.catch(() => {});
+    return showToast("this region is above the audio output range");
+  }
+  const generation = ++auditionGeneration;
   clearAuditionStopTimer();
   // Clearing the last error makes browser diagnostics easier without adding anything to the visible interface.
   delete ui.audio.dataset.playbackError;
-  configureAuditionFilter(selection, mode);
   state.auditionAnnotationId = annotation.id;
   state.auditionSelection = { ...selection };
   state.auditionSelectionKey = selectionKey;
@@ -1475,9 +1633,11 @@ async function auditionSelection(annotation, selection, mode = "full", shouldLoo
   try {
     const playbackStarted = ui.audio.play();
     await Promise.all([audioReady, playbackStarted]);
+    if (generation !== auditionGeneration) return;
     // timeupdate events are fairly slow, so this timer keeps short selections exact.
     scheduleAuditionBoundary();
   } catch (error) {
+    if (generation !== auditionGeneration) return;
     console.warn("Annotation audition could not start:", error);
     ui.audio.dataset.playbackError = `${error.name}: ${error.message}`;
     state.auditionAnnotationId = null;
@@ -1501,6 +1661,11 @@ function scheduleAuditionBoundary() {
 function handleAuditionBoundary() {
   const selection = state.auditionSelection;
   if (!selection) return;
+  // A seek or buffering pause may have stalled media time while this timer ran.
+  if (ui.audio.currentTime < selection.end - 0.015) {
+    scheduleAuditionBoundary();
+    return;
+  }
   if (state.auditionLoop) {
     seekAudioTo(selection.start);
     updatePlayhead(selection.start);
@@ -1607,8 +1772,11 @@ function themeColour(variable) {
 function drawWaveform() {
   if (!state.audioBuffer) return;
   const { context, width, height } = prepareCanvas(ui.waveformCanvas, ui.waveformFrame);
-  const samples = state.audioBuffer.getChannelData(0);
-  const samplesPerPixel = Math.max(1, Math.floor(samples.length / width));
+  const envelope = waveformEnvelopes.get(state.audioBuffer);
+  // A committed recording always has worker-prepared peaks. Raw samples are
+  // also supported for lightweight, externally supplied test buffers.
+  const samples = envelope || state.audioBuffer.getChannelData(0);
+  const buckets = envelope ? samples.length / 2 : samples.length;
   const centre = height / 2;
 
   context.clearRect(0, 0, width, height);
@@ -1620,16 +1788,17 @@ function drawWaveform() {
 
   context.fillStyle = themeColour("--fg");
   for (let x = 0; x < width; x += 1) {
-    const start = x * samplesPerPixel;
-    const end = Math.min(samples.length, start + samplesPerPixel);
-    let minimum = 1;
-    let maximum = -1;
+    const start = Math.min(buckets - 1, Math.floor(x * buckets / width));
+    const end = Math.min(buckets, Math.max(start + 1, Math.ceil((x + 1) * buckets / width)));
+    let minimum = 0;
+    let maximum = 0;
 
     // Looking for both extremes preserves sharp transients better than averaging.
     for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
-      const value = samples[sampleIndex];
-      if (value < minimum) minimum = value;
-      if (value > maximum) maximum = value;
+      const low = envelope ? samples[sampleIndex * 2] : samples[sampleIndex];
+      const high = envelope ? samples[sampleIndex * 2 + 1] : low;
+      if (low < minimum) minimum = low;
+      if (high > maximum) maximum = high;
     }
 
     const top = centre + minimum * centre * 0.88;
@@ -1638,60 +1807,28 @@ function drawWaveform() {
   }
 }
 
-// This palette is turned into a raster once per analysis resolution. Resizing
-// or entering focused view can then draw that cached detail immediately.
-const SPECTROGRAM_PALETTE = [
-  [7, 16, 34],
-  [20, 49, 118],
-  [35, 112, 178],
-  [55, 177, 198],
-  [111, 214, 188],
-  [246, 201, 105],
-  [255, 246, 215],
-];
-
-function spectrogramSettingsForViewport(duration) {
+function spectrogramSettingsForViewport({ duration, sampleRate }) {
   const ratio = window.devicePixelRatio || 1;
   // Focused view can use most of the window. Preparing for that size up front
   // avoids stretching the ordinary, smaller panel when focus mode is opened.
   return chooseSpectrogramSettings({
-    duration,
+    duration, sampleRate,
     targetWidth: Math.ceil(window.innerWidth * ratio),
     targetHeight: Math.ceil(window.innerHeight * 0.68 * ratio),
   });
 }
 
 function createSpectrogramRaster(spectrumData) {
-  const { values, columns, rows, peakDb, floorDb } = spectrumData;
+  const { columns, rows, rgba } = spectrumData;
   const offscreen = document.createElement("canvas");
   offscreen.width = columns;
   offscreen.height = rows;
-  const offscreenContext = offscreen.getContext("2d");
-  const image = offscreenContext.createImageData(columns, rows);
-
-  for (let column = 0; column < columns; column += 1) {
-    for (let row = 0; row < rows; row += 1) {
-      const decibels = values[column * rows + row];
-      let energy = (decibels - floorDb) / Math.max(1, peakDb - floorDb);
-      energy = Math.pow(Math.max(0, Math.min(1, energy)), 1.15);
-      const palettePosition = energy * (SPECTROGRAM_PALETTE.length - 1);
-      const lowerColour = SPECTROGRAM_PALETTE[Math.floor(palettePosition)];
-      const upperColour = SPECTROGRAM_PALETTE[Math.min(SPECTROGRAM_PALETTE.length - 1, Math.ceil(palettePosition))];
-      const colourBlend = palettePosition - Math.floor(palettePosition);
-      const pixel = (row * columns + column) * 4;
-      image.data[pixel] = Math.round(lowerColour[0] + (upperColour[0] - lowerColour[0]) * colourBlend);
-      image.data[pixel + 1] = Math.round(lowerColour[1] + (upperColour[1] - lowerColour[1]) * colourBlend);
-      image.data[pixel + 2] = Math.round(lowerColour[2] + (upperColour[2] - lowerColour[2]) * colourBlend);
-      image.data[pixel + 3] = 255;
-    }
-  }
-
-  offscreenContext.putImageData(image, 0, 0);
+  offscreen.getContext("2d").putImageData(new ImageData(rgba, columns, rows), 0, 0);
   return offscreen;
 }
 
-function installSpectrogramData(spectrumData) {
-  state.spectrogramRaster = createSpectrogramRaster(spectrumData);
+function installSpectrogramData(spectrumData, raster = createSpectrogramRaster(spectrumData)) {
+  state.spectrogramRaster = raster;
   // These data attributes are harmless in production and make it easy to
   // verify that focused view is using real source detail rather than upscaling.
   ui.spectrogramCanvas.dataset.sourceWidth = String(spectrumData.columns);
@@ -1699,7 +1836,8 @@ function installSpectrogramData(spectrumData) {
   ui.spectrogramCanvas.dataset.fftSize = String(spectrumData.fftSize);
   // The coloured canvas now holds the display pixels, so the large matrix can
   // be released. Keeping only its dimensions avoids retaining two full copies.
-  state.spectrumData = { ...spectrumData, values: null };
+  const { rgba, ...dimensions } = spectrumData;
+  state.spectrumData = dimensions;
 }
 
 function drawSpectrogram() {
@@ -1712,20 +1850,41 @@ function drawSpectrogram() {
 }
 
 function ensureSpectrogramDetail() {
-  if (!state.audioBuffer || !state.spectrumData) return;
-  const requested = spectrogramSettingsForViewport(state.audioBuffer.duration);
-  const needsMoreColumns = requested.columns > state.spectrumData.columns * 1.15;
-  const needsMoreRows = requested.rows > state.spectrumData.rows * 1.15;
+  const audioBuffer = state.audioBuffer;
+  if (!audioBuffer || !state.spectrumData || audioLoadInProgress) return;
+  const requested = spectrogramSettingsForViewport(audioBuffer);
+  const planned = spectrumDetail?.settings || state.spectrumData;
+  const needsMoreColumns = requested.columns > planned.columns * 1.15;
+  const needsMoreRows = requested.rows > planned.rows * 1.15;
   if (!needsMoreColumns && !needsMoreRows) return;
 
-  window.clearTimeout(state.spectrogramDetailTimer);
-  state.spectrogramDetailTimer = window.setTimeout(() => {
-    setProjectStatus("refining spectrogram detail…");
-    const detailed = analyseSpectrogram(state.audioBuffer, requested);
-    installSpectrogramData(detailed);
-    drawSpectrogram();
-    setProjectStatus(`${state.artistName} · ${state.trackTitle}`);
-  }, 220);
+  cancelSpectrogramDetail();
+  const controller = new AbortController();
+  const settings = {
+    ...requested,
+    columns: Math.max(planned.columns, requested.columns),
+    rows: Math.max(planned.rows, requested.rows),
+  };
+  const timer = window.setTimeout(async () => {
+    try {
+      const detailed = await runAnalysis("spectrum", audioBuffer, { settings, signal: controller.signal });
+      if (controller.signal.aborted || state.audioBuffer !== audioBuffer) return;
+      installSpectrogramData(detailed);
+      drawSpectrogram();
+    } catch (error) {
+      if (!controller.signal.aborted) console.warn("Spectrogram detail could not be refreshed:", error);
+    } finally {
+      if (spectrumDetail?.controller === controller) spectrumDetail = null;
+    }
+  }, 250);
+  spectrumDetail = { controller, settings, timer };
+}
+
+function cancelSpectrogramDetail() {
+  if (!spectrumDetail) return;
+  window.clearTimeout(spectrumDetail.timer);
+  spectrumDetail.controller.abort();
+  spectrumDetail = null;
 }
 
 function isUsableRhythmGrid(grid) {
@@ -1741,7 +1900,7 @@ function normaliseRhythmGrid(grid = {}) {
   return {
     bpm,
     beatsPerBar: Math.max(3, Math.min(7, Math.round(Number(grid.beatsPerBar) || 4))),
-    barOneAtSeconds: Number(grid.barOneAtSeconds ?? grid.originSeconds ?? grid.downbeatTime ?? 0) || 0,
+    barOneAtSeconds: Math.max(-604800, Math.min(604800, Number(grid.barOneAtSeconds ?? grid.originSeconds ?? grid.downbeatTime ?? 0) || 0)),
     source: grid.source === "manual" ? "manual" : "automatic",
     tempoMode: grid.tempoMode === "variable" ? "variable" : "constant",
     analysisStatus: grid.analysisStatus || grid.details?.status || "ok",
@@ -1773,7 +1932,9 @@ function barDurationSeconds(grid = state.rhythmGrid) {
 }
 
 function storedBarMarkerOpacity() {
-  const saved = Number(localStorage.getItem("music-analyser-bar-marker-opacity"));
+  const raw = storage.getItem("music-analyser-bar-marker-opacity");
+  if (raw === null || raw.trim() === "") return 1;
+  const saved = Number(raw);
   return Number.isFinite(saved) ? Math.max(0.15, Math.min(1, saved)) : 1;
 }
 
@@ -1848,7 +2009,7 @@ ui.rhythmGridToggle.addEventListener("click", () => {
 
 ui.barMarkerOpacityInput.addEventListener("input", () => {
   state.barMarkerOpacity = Math.max(0.15, Math.min(1, Number(ui.barMarkerOpacityInput.value) / 100));
-  localStorage.setItem("music-analyser-bar-marker-opacity", String(state.barMarkerOpacity));
+  storage.setItem("music-analyser-bar-marker-opacity", String(state.barMarkerOpacity));
   syncBarMarkerOpacity();
 });
 
@@ -1899,21 +2060,31 @@ ui.barEarlierButton.addEventListener("click", () => changeRhythmGrid({ barOneAtS
 ui.barLaterButton.addEventListener("click", () => changeRhythmGrid({ barOneAtSeconds: state.rhythmGrid.barOneAtSeconds + barDurationSeconds() }, "bar numbering moved one bar later"));
 
 ui.reanalyseTempoButton.addEventListener("click", async () => {
-  if (!state.audioBuffer) return;
+  if (!state.audioBuffer || audioLoadInProgress) return;
+  const generation = audioLoadGeneration;
+  const audioBuffer = state.audioBuffer;
+  const previousGrid = state.rhythmGrid;
+  const controller = new AbortController();
+  tempoAnalysisController = controller;
   ui.reanalyseTempoButton.disabled = true;
   ui.rhythmGridStatus.textContent = "analysing tempo again…";
   setProjectStatus("analysing tempo again…");
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
   try {
-    const detected = normaliseRhythmGrid(analyseTempo(state.audioBuffer));
+    const analysis = await runAnalysis("tempo", audioBuffer, { signal: controller.signal });
+    if (generation !== audioLoadGeneration || state.audioBuffer !== audioBuffer) return;
+    const detected = normaliseRhythmGrid(analysis);
     state.detectedRhythmGrid = { ...detected, confidence: { ...detected.confidence } };
-    restoreAutomaticRhythmGrid("tempo analysis refreshed");
+    if (state.rhythmGrid === previousGrid) restoreAutomaticRhythmGrid("tempo analysis refreshed");
+    else syncRhythmGridUi();
   } catch (error) {
-    console.warn("Tempo analysis could not be repeated:", error);
-    showToast("tempo analysis could not be repeated");
+    if (!controller.signal.aborted) {
+      console.warn("Tempo analysis could not be repeated:", error);
+      showToast("tempo analysis could not be repeated");
+    }
   } finally {
+    if (tempoAnalysisController === controller) tempoAnalysisController = null;
     ui.reanalyseTempoButton.disabled = false;
-    setProjectStatus(`${state.artistName} · ${state.trackTitle}`);
+    if (generation === audioLoadGeneration) setProjectStatus(`${state.artistName} · ${state.trackTitle}`);
   }
 });
 
@@ -1924,7 +2095,8 @@ function drawTimeRuler() {
   const duration = state.audioBuffer.duration;
   const grid = state.rhythmGrid;
   const beatDuration = beatDurationSeconds(grid);
-  const beatSpacing = (beatDuration / duration) * ui.timeRuler.clientWidth;
+  const rulerWidth = ui.timeRuler.clientWidth;
+  const beatSpacing = (beatDuration / duration) * rulerWidth;
   const barSpacing = beatSpacing * grid.beatsPerBar;
   const labelEveryBars = niceGridStep(82 / Math.max(1, barSpacing));
   const firstBeat = Math.ceil((0 - grid.barOneAtSeconds) / beatDuration - 1e-7);
@@ -1948,6 +2120,7 @@ function drawTimeRuler() {
       if (positiveModulo(barIndex, labelEveryBars) === 0) {
         const label = document.createElement("span");
         label.textContent = `bar ${barNumber}`;
+        if ((duration - seconds) / duration * rulerWidth < 54) mark.classList.add("is-end");
         mark.append(label);
       }
     }
@@ -1958,7 +2131,8 @@ function drawTimeRuler() {
 
 function drawSecondsRuler() {
   const duration = state.audioBuffer.duration;
-  const targetMarks = Math.max(4, Math.floor(ui.timeRuler.clientWidth / 150));
+  const rulerWidth = ui.timeRuler.clientWidth;
+  const targetMarks = Math.max(4, Math.floor(rulerWidth / 150));
   const rawStep = duration / targetMarks;
   const usefulSteps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
   const step = usefulSteps.find((candidate) => candidate >= rawStep) || Math.ceil(rawStep / 600) * 600;
@@ -1969,6 +2143,7 @@ function drawSecondsRuler() {
     mark.style.left = `${(seconds / duration) * 100}%`;
     const label = document.createElement("span");
     label.textContent = formatTime(seconds, false);
+    if ((duration - seconds) / duration * rulerWidth < 48) mark.classList.add("is-end");
     mark.append(label);
     ui.timeRuler.append(mark);
   }
@@ -2067,6 +2242,7 @@ ui.focusedViewButton.addEventListener("click", () => setFocusedView(!state.isFoc
 
 function setFocusedView(enabled) {
   if (!state.audioBuffer) return;
+  if (enabled) mixLab?.pauseAudition();
   state.isFocusedView = enabled;
   document.body.classList.toggle("is-focused", enabled);
   ui.focusedViewButton.setAttribute("aria-pressed", String(enabled));
@@ -2096,21 +2272,28 @@ function openQuickNote(pointerEvent) {
     ? `${formatMusicalRange(state.selection.start, state.selection.end)} · ${formatFrequency(state.selection.minFrequency)} — ${formatFrequency(state.selection.maxFrequency)}`
     : formatMusicalRange(state.selection.start, state.selection.end);
 
-  const panelWidth = 300;
-  const panelHeight = 230;
-  const preferredX = pointerEvent.clientX + 16;
-  const preferredY = pointerEvent.clientY + 16;
-  ui.quickNoteForm.style.left = `${Math.max(12, Math.min(window.innerWidth - panelWidth - 12, preferredX))}px`;
-  ui.quickNoteForm.style.top = `${Math.max(58, Math.min(window.innerHeight - panelHeight - 12, preferredY))}px`;
+  positionQuickNote(pointerEvent.clientX + 16, pointerEvent.clientY + 16);
   ui.quickNoteInput.value = "";
   ui.quickNoteInput.focus();
 }
 
+function positionQuickNote(preferredX = parseFloat(ui.quickNoteForm.style.left) || 12, preferredY = parseFloat(ui.quickNoteForm.style.top) || 58) {
+  const width = ui.quickNoteForm.offsetWidth;
+  const height = ui.quickNoteForm.offsetHeight;
+  ui.quickNoteForm.style.left = `${Math.max(12, Math.min(window.innerWidth - width - 12, preferredX))}px`;
+  ui.quickNoteForm.style.top = `${Math.max(58, Math.min(window.innerHeight - height - 12, preferredY))}px`;
+}
+
 function closeQuickNote() {
+  const restoreFocus = state.isFocusedView && ui.quickNoteForm.contains(document.activeElement);
   ui.quickNoteForm.hidden = true;
   ui.quickCustomCategoryRow.hidden = true;
   ui.quickCustomCategoryInput.value = "";
   ui.quickNoteInput.value = "";
+  if (restoreFocus) {
+    const frame = state.selection?.source === "waveform" ? ui.waveformFrame : ui.spectrogramFrame;
+    frame.focus({ preventScroll: true });
+  }
 }
 
 ui.quickNoteClose.addEventListener("click", closeQuickNote);
@@ -2130,6 +2313,7 @@ ui.quickNoteInput.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || event.target.closest?.("dialog[open]")) return;
   const modifier = event.metaKey || event.ctrlKey;
   if (modifier && event.key.toLowerCase() === "z") {
     const active = document.activeElement;
@@ -2141,12 +2325,20 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key !== "Escape") return;
-  if (state.pendingAttachmentId) cancelPendingAttachment();
-  else if (!ui.quickNoteForm.hidden) closeQuickNote();
+  const openPicker = document.querySelector(".category-picker__button[aria-expanded='true']");
+  if (openPicker) {
+    event.preventDefault();
+    closeCategoryPickers();
+    openPicker.focus();
+    return;
+  }
+  if (!ui.quickNoteForm.hidden) closeQuickNote();
   else if (!ui.rhythmGridPanel.hidden) {
     ui.rhythmGridPanel.hidden = true;
     ui.rhythmGridToggle.setAttribute("aria-expanded", "false");
+    ui.rhythmGridToggle.focus();
   }
+  else if (state.pendingAttachmentId) cancelPendingAttachment();
   else if (state.isFocusedView) setFocusedView(false);
 });
 
@@ -2182,8 +2374,9 @@ function finishDrag(event, source) {
   const horizontalDistance = Math.abs(state.drag.currentX - state.drag.startX);
   const verticalDistance = Math.abs(state.drag.currentY - state.drag.startY);
 
-  if (horizontalDistance < 4 && (source === "waveform" || verticalDistance < 4)) {
+  if (horizontalDistance < 4) {
     // A click is treated as a seek command, while a drag creates a note range.
+    cancelRegionAudition();
     const seekTime = (state.drag.currentX / frame.clientWidth) * state.audioBuffer.duration;
     seekAudioTo(seekTime);
     updatePlayhead(seekTime);
@@ -2220,6 +2413,53 @@ function pointWithinFrame(event, frame) {
     y: Math.max(0, Math.min(rectangle.height, event.clientY - rectangle.top)),
   };
 }
+
+const regionEntry = document.querySelector("#regionEntry");
+const regionError = document.querySelector("#regionError");
+const [regionStart, regionEnd, regionLow, regionHigh] =
+  ["#regionStart", "#regionEnd", "#regionLow", "#regionHigh"].map((selector) => document.querySelector(selector));
+regionEntry.addEventListener("toggle", () => {
+  if (!regionEntry.open || !state.audioBuffer) return;
+  const selection = state.selection;
+  const start = selection?.start ?? ui.audio.currentTime;
+  const end = selection?.end ?? Math.min(state.audioBuffer.duration, start + 1);
+  regionStart.value = Number(start.toFixed(3));
+  regionEnd.value = Number(end.toFixed(3));
+  regionLow.value = selection?.minFrequency ? Math.round(selection.minFrequency) : "";
+  regionHigh.value = selection?.maxFrequency ? Math.round(selection.maxFrequency) : "";
+  regionError.hidden = true;
+});
+document.querySelector("#regionForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!state.audioBuffer) return;
+  const { duration, sampleRate } = state.audioBuffer;
+  const start = regionStart.valueAsNumber;
+  const enteredEnd = regionEnd.valueAsNumber;
+  const minFrequency = regionLow.valueAsNumber;
+  const maxFrequency = regionHigh.valueAsNumber;
+  const spectral = regionLow.value !== "" || regionHigh.value !== "";
+  if (!(start >= 0 && enteredEnd > start && start < duration && enteredEnd <= duration + 0.0005)) {
+    regionError.textContent = `Enter a start and end within the recording (0–${duration.toFixed(3)} s).`;
+  } else if (spectral && !(minFrequency >= 20 && maxFrequency > minFrequency && maxFrequency <= sampleRate / 2)) {
+    regionError.textContent = `Enter both frequencies in ascending order, from 20 to ${sampleRate / 2} Hz.`;
+  } else {
+    regionError.hidden = true;
+    cancelRegionAudition();
+    state.selection = { start, end: Math.min(enteredEnd, duration), source: spectral ? "spectrogram" : "waveform",
+      minFrequency: spectral ? minFrequency : null, maxFrequency: spectral ? maxFrequency : null };
+    state.hoveredAnnotation = null;
+    state.hoveredCard = null;
+    state.selectedAnnotationId = null;
+    hideHoverConnector();
+    updateTimelineSelectionClasses();
+    updateSelectionDisplay();
+    regionEntry.open = false;
+    if (state.pendingAttachmentId) completePendingAttachment();
+    ui.noteInput.focus();
+    return;
+  }
+  regionError.hidden = false;
+});
 
 function renderDragPreview() {
   if (!state.drag) return;
@@ -2375,12 +2615,35 @@ function syncCategoryPicker(select) {
       closeCategoryPickers(picker);
       menu.hidden = !opening;
       trigger.setAttribute("aria-expanded", String(opening));
+      if (opening) menu.querySelector("[aria-selected='true']")?.focus();
     });
+    picker.addEventListener("keydown", (event) => {
+      const menu = picker.querySelector(".category-picker__menu");
+      const choices = [...menu.querySelectorAll(".category-picker__option")];
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      menu.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      const index = choices.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1
+        : event.key === "ArrowDown" ? (index + 1) % choices.length
+        : index <= 0 ? choices.length - 1 : index - 1;
+      choices[next]?.focus();
+    });
+    picker.addEventListener("focusout", (event) => {
+      if (!picker.contains(event.relatedTarget)) {
+        picker.querySelector(".category-picker__menu").hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    });
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
   }
 
   const selected = select.value || state.categories[0];
   const colour = categoryColour(selected === "__new__" ? "form" : selected);
   const trigger = picker.querySelector(".category-picker__button");
+  trigger.setAttribute("aria-label", `Choose ${select === ui.quickCategorySelect ? "quick note " : ""}category: ${selected === "__new__" ? "new category" : selected}`);
   trigger.style.setProperty("--category-colour", colour);
   trigger.querySelector(".category-picker__dot").style.setProperty("--option-colour", colour);
   trigger.querySelector("span").textContent = selected === "__new__" ? "+ new category" : selected;
@@ -2389,6 +2652,7 @@ function syncCategoryPicker(select) {
   menu.replaceChildren(...[...select.options].map((option) => {
     const choice = document.createElement("button");
     choice.type = "button";
+    choice.tabIndex = -1;
     choice.className = "category-picker__option";
     choice.setAttribute("role", "option");
     choice.setAttribute("aria-selected", String(option.value === selected));
@@ -2397,10 +2661,10 @@ function syncCategoryPicker(select) {
     choice.innerHTML = option.value === "__new__" ? `<span>+ new category</span>` : `<i class="category-picker__option-dot"></i><span>${escapeHtml(option.value)}</span>`;
     choice.addEventListener("click", () => {
       select.value = option.value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
       menu.hidden = true;
       trigger.setAttribute("aria-expanded", "false");
-      syncCategoryPicker(select);
+      trigger.focus();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
     });
     return choice;
   }));
@@ -2451,11 +2715,13 @@ function saveCustomCategory() {
   if (!category) return;
   ui.customCategoryInput.value = "";
   ui.customCategoryRow.hidden = true;
+  ui.categorySelect.nextElementSibling?.querySelector(".category-picker__button")?.focus();
 }
 
 ui.quickCategorySelect.addEventListener("change", () => {
   const adding = ui.quickCategorySelect.value === "__new__";
   ui.quickCustomCategoryRow.hidden = !adding;
+  positionQuickNote();
   if (adding) ui.quickCustomCategoryInput.focus();
   updateQuickCategoryControlColour();
 });
@@ -2473,6 +2739,7 @@ function saveQuickCustomCategory() {
   if (!category) return;
   ui.quickCustomCategoryInput.value = "";
   ui.quickCustomCategoryRow.hidden = true;
+  ui.quickCategorySelect.nextElementSibling?.querySelector(".category-picker__button")?.focus();
 }
 
 function addCustomCategory(rawCategory) {
@@ -2481,9 +2748,13 @@ function addCustomCategory(rawCategory) {
     showToast("enter a category name");
     return "";
   }
+  if (category === "all" || category === "__new__") {
+    showToast("that category name is reserved — choose a different name");
+    return "";
+  }
   if (!state.categories.includes(category)) {
     rememberUndoPoint();
-    state.categories.push(category);
+    state.categories = [...state.categories, category];
   }
   renderCategoryOptions(category);
   saveProject();
@@ -2506,7 +2777,7 @@ ui.noteInput.addEventListener("keydown", (event) => {
 function saveAnnotation() {
   const note = ui.noteInput.value.trim();
   const category = ui.categorySelect.value;
-  if (!state.selection) return showToast("select a time or frequency range first");
+  if (!isUsableSelection(state.selection)) return showToast("select a time or frequency range first");
   if (!note) return showToast("write an observation first");
   if (category === "__new__") return showToast("save the new category first");
 
@@ -2531,7 +2802,7 @@ function commitAnnotation(category, note) {
     createdAt: new Date().toISOString(),
   };
 
-  if (state.editingId) {
+  if (state.editingId && existingAnnotation) {
     const index = state.annotations.findIndex((item) => item.id === state.editingId);
     annotation.createdAt = state.annotations[index]?.createdAt || annotation.createdAt;
     state.annotations[index] = annotation;
@@ -2582,7 +2853,7 @@ function beginPendingAttachment(annotation) {
   state.hoveredCard = null;
   hideHoverConnector();
   renderTimeline();
-  showToast("select one or more areas · press + again when finished");
+  showToast("select or enter more regions · press + again when finished");
 }
 
 function completePendingAttachment() {
@@ -2654,7 +2925,16 @@ function nextSectionName() {
   return `Section ${highestNumber + 1}`;
 }
 
-function renderArrangement() {
+function positionArrangementEditor(chapter, editor, alignRight = false) {
+  const track = ui.arrangementTrack.getBoundingClientRect();
+  const marker = chapter.getBoundingClientRect();
+  const width = editor.offsetWidth;
+  const preferred = alignRight ? marker.right - width : marker.left + 4;
+  const left = Math.max(track.left + 4, Math.min(preferred, track.right - width - 4));
+  editor.style.left = `${left - marker.left}px`;
+}
+
+function renderArrangement(focusId = null) {
   if (!ui.arrangementTrack) return;
   const sorted = [...state.sections].sort((first, second) => first.start - second.start || first.end - second.end);
   ui.arrangementSummary.textContent = sorted.length === 1 ? "1 section marker" : sorted.length ? `${sorted.length} section markers` : "no section markers yet";
@@ -2670,6 +2950,7 @@ function renderArrangement() {
   const trackRect = ui.arrangementTrack.getBoundingClientRect();
   const waveformRect = ui.waveformFrame.getBoundingClientRect();
   const spine = document.createElement("div");
+  let focusTarget;
   spine.className = "arrangement-spine";
   spine.style.left = `${waveformRect.left - trackRect.left}px`;
   spine.style.width = `${waveformRect.width}px`;
@@ -2677,6 +2958,7 @@ function renderArrangement() {
   sorted.forEach((section) => {
     const chapter = document.createElement("div");
     chapter.className = "arrangement-chapter";
+    if (section.id === focusId) focusTarget = chapter;
     chapter.tabIndex = 0;
     chapter.style.setProperty("--section-colour", section.colour);
     chapter.style.left = `${(section.start / state.audioBuffer.duration) * 100}%`;
@@ -2698,6 +2980,7 @@ function renderArrangement() {
       state.sections = state.sections.filter((item) => item.id !== section.id);
       saveProject();
       renderArrangement();
+      ui.sectionMarkerForm.querySelector("button")?.focus({ preventScroll: true });
       showToast("section marker deleted");
     });
 
@@ -2709,45 +2992,73 @@ function renderArrangement() {
     colourButton.title = `Change colour for ${section.name}`;
     colourButton.setAttribute("aria-label", colourButton.title);
     colourButton.setAttribute("aria-expanded", "false");
+    colourButton.setAttribute("aria-haspopup", "menu");
     const palette = document.createElement("div");
     palette.className = "arrangement-chapter__palette";
     palette.hidden = true;
     palette.setAttribute("role", "menu");
     palette.setAttribute("aria-label", `Colours for ${section.name}`);
 
-    SECTION_COLOURS.forEach((colour) => {
+    function closePalette(restoreFocus) {
+      palette.hidden = true;
+      chapter.classList.remove("is-colour-picker-open");
+      colourButton.setAttribute("aria-expanded", "false");
+      if (restoreFocus) colourButton.focus({ preventScroll: true });
+    }
+    let activeColour = section.colour;
+    SECTION_COLOURS.forEach((colour, index) => {
       const option = document.createElement("button");
       option.type = "button";
+      option.tabIndex = -1;
       option.className = "arrangement-chapter__colour-option";
       option.style.setProperty("--option-colour", colour);
       option.setAttribute("role", "menuitemradio");
-      option.setAttribute("aria-label", `Use ${colour} for ${section.name}`);
+      option.setAttribute("aria-label", `Use ${SECTION_COLOUR_NAMES[index]} for ${section.name}`);
       option.setAttribute("aria-checked", String(colour === section.colour));
       option.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (colour === section.colour) {
-          palette.hidden = true;
-          chapter.classList.remove("is-colour-picker-open");
-          colourButton.setAttribute("aria-expanded", "false");
-          return;
+        if (colour !== activeColour) {
+          rememberUndoPoint();
+          activeColour = colour;
+          state.sections = state.sections.map((item) => item.id === section.id ? { ...item, colour } : item);
+          chapter.style.setProperty("--section-colour", colour);
+          for (const choice of palette.children) choice.setAttribute("aria-checked", String(choice === option));
+          saveProject();
+          showToast(`${section.name} colour changed`);
         }
-        rememberUndoPoint();
-        state.sections = state.sections.map((item) => item.id === section.id ? { ...item, colour } : item);
-        saveProject();
-        renderArrangement();
-        showToast(`${section.name} colour changed`);
+        closePalette(true);
       });
       palette.append(option);
     });
 
     colourButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      const opening = palette.hidden;
-      palette.hidden = !opening;
-      chapter.classList.toggle("is-colour-picker-open", opening);
-      colourButton.setAttribute("aria-expanded", String(opening));
+      if (!palette.hidden) return closePalette(true);
+      palette.hidden = false;
+      chapter.classList.add("is-colour-picker-open");
+      colourButton.setAttribute("aria-expanded", "true");
+      positionArrangementEditor(chapter, palette, true);
+      palette.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+    });
+    chapter.addEventListener("focusout", (event) => {
+      if (!chapter.contains(event.relatedTarget)) closePalette(false);
     });
     palette.addEventListener("click", (event) => event.stopPropagation());
+    palette.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePalette(true);
+        return;
+      }
+      const options = [...palette.children];
+      const index = options.indexOf(document.activeElement);
+      const offset = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 }[event.key];
+      if (offset === undefined && !["Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+        : (index + offset + options.length) % options.length;
+      options[next]?.focus({ preventScroll: true });
+    });
     const beginRename = () => {
       if (chapter.classList.contains("is-editing")) return;
       chapter.classList.add("is-editing");
@@ -2759,7 +3070,7 @@ function renderArrangement() {
       input.setAttribute("aria-label", `Rename ${section.name}`);
 
       let finished = false;
-      const finish = (saveName) => {
+      const finish = (saveName, returnFocus = false) => {
         if (finished) return;
         finished = true;
         const nextName = input.value.trim();
@@ -2769,7 +3080,7 @@ function renderArrangement() {
           saveProject();
           showToast(`renamed to ${nextName}`);
         }
-        renderArrangement();
+        renderArrangement(returnFocus ? section.id : null);
       };
 
       input.addEventListener("click", (event) => event.stopPropagation());
@@ -2777,14 +3088,15 @@ function renderArrangement() {
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          finish(true);
+          finish(true, true);
         }
         if (event.key === "Escape") {
           event.preventDefault();
-          finish(false);
+          finish(false, true);
         }
       });
-      chapter.replaceChildren(input, remove);
+      chapter.replaceChildren(input);
+      positionArrangementEditor(chapter, input);
       input.focus();
       input.select();
     };
@@ -2802,6 +3114,7 @@ function renderArrangement() {
     spine.append(chapter);
   });
   ui.arrangementTrack.append(spine);
+  focusTarget?.focus({ preventScroll: true });
 }
 
 function renderTimeline() {
@@ -2842,6 +3155,7 @@ function renderTimeline() {
     const laneStep = 112;
     const laneEnds = [];
     const cards = [];
+    const connectors = [];
 
     visible.forEach((annotation, index) => {
       const midpointRatio = ((annotation.start + annotation.end) / 2) / state.audioBuffer.duration;
@@ -2861,6 +3175,7 @@ function renderTimeline() {
       item.style.left = `${left}px`;
       item.style.top = `${top}px`;
       item.dataset.anchorOffset = String(anchorOffset);
+      item.dataset.lane = String(lane);
 
       annotationSelections(annotation).forEach((selection) => {
         const selectionMidpointRatio = ((selection.start + selection.end) / 2) / state.audioBuffer.duration;
@@ -2872,6 +3187,7 @@ function renderTimeline() {
         connector.style.height = `${top - 34}px`;
         connector.style.setProperty("--category-colour", categoryColour(annotation.category));
         if (annotation.id === state.selectedAnnotationId) connector.classList.add("is-selected");
+        connectors.push({ connector, lane });
         ui.timeline.append(connector);
       });
       cards.push(item);
@@ -2879,7 +3195,15 @@ function renderTimeline() {
 
     cards.forEach((item) => ui.timeline.append(item));
 
-    ui.timeline.style.minHeight = `${66 + laneEnds.length * laneStep + 16}px`;
+    // Category names, text zoom and wrapping can make a card taller than one
+    // fixed lane. Measure once after insertion, then give each lane its own height.
+    const heights = laneEnds.map(() => 0);
+    cards.forEach((item) => { const lane = Number(item.dataset.lane); heights[lane] = Math.max(heights[lane], item.offsetHeight); });
+    let bottom = 66;
+    const tops = heights.map((height) => { const top = bottom; bottom += Math.max(88, height) + 16; return top; });
+    cards.forEach((item) => { item.style.top = `${tops[Number(item.dataset.lane)]}px`; });
+    connectors.forEach(({ connector, lane }) => { connector.style.height = `${tops[lane] - 34}px`; });
+    ui.timeline.style.minHeight = `${bottom + 16}px`;
     state.lastCreatedAnnotationId = null;
   }
 
@@ -2984,15 +3308,17 @@ function createTimelineItem(annotation) {
   const category = document.createElement("span");
   category.className = "timeline-item__category";
   category.textContent = annotation.category;
+  category.title = annotation.category;
   const time = document.createElement("div");
   time.className = "timeline-item__time";
   time.innerHTML = `<span>${formatMusicalRange(annotation.start, annotation.end)}</span><span class="timeline-item__frequency">${annotation.source === "spectrogram" ? `${formatFrequency(annotation.minFrequency)} — ${formatFrequency(annotation.maxFrequency)}` : "full spectrum"}</span>`;
-  time.title = `${formatTime(annotation.start, true)} — ${formatTime(annotation.end, true)}`;
+  time.title = `${formatMusicalRange(annotation.start, annotation.end)} · ${formatTime(annotation.start, true)} — ${formatTime(annotation.end, true)}`;
   head.append(time, category);
 
   const note = document.createElement("p");
   note.className = "timeline-item__note";
   note.textContent = annotation.note;
+  note.title = annotation.note;
 
   const actions = document.createElement("div");
   actions.className = "timeline-item__actions";
@@ -3000,11 +3326,19 @@ function createTimelineItem(annotation) {
   attachButton.type = "button";
   attachButton.className = "timeline-item__attach";
   attachButton.textContent = "+";
-  attachButton.title = "Attach another waveform or spectrogram region";
+  attachButton.title = state.pendingAttachmentId === annotation.id
+    ? "Finish attaching regions"
+    : "Attach another waveform or spectrogram region";
   attachButton.setAttribute("aria-label", attachButton.title);
   attachButton.addEventListener("click", (event) => {
     event.stopPropagation();
     beginPendingAttachment(annotation);
+    if (event.detail !== 0) return;
+    if (state.pendingAttachmentId === annotation.id) {
+      regionEntry.querySelector("summary")?.focus();
+    } else {
+      ui.timeline.querySelector(`.timeline-item[data-id="${CSS.escape(annotation.id)}"] .timeline-item__attach`)?.focus();
+    }
   });
   const locateButton = document.createElement("button");
   locateButton.type = "button";
@@ -3038,6 +3372,7 @@ function createTimelineItem(annotation) {
   });
   item.addEventListener("click", () => selectAnnotation(annotation));
   item.addEventListener("keydown", (event) => {
+    if (event.target !== item) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       selectAnnotation(annotation);
@@ -3134,6 +3469,7 @@ function selectionRect(selection) {
 }
 
 function locateAnnotation(annotation) {
+  cancelRegionAudition();
   selectAnnotation(annotation);
   seekAudioTo(annotation.start);
   updatePlayhead(annotation.start);
@@ -3145,6 +3481,8 @@ function editAnnotation(annotation) {
   locateAnnotation(annotation);
   state.editingId = annotation.id;
   ui.categorySelect.value = annotation.category;
+  ui.customCategoryRow.hidden = true;
+  updateCategoryControlColour();
   ui.noteInput.value = annotation.note;
   ui.addButton.innerHTML = "update annotation <span>↵</span>";
   ui.noteInput.focus();
@@ -3159,7 +3497,9 @@ function deleteAnnotation(id) {
     state.selection = null;
   }
   state.annotations = state.annotations.filter((annotation) => annotation.id !== id);
-  if (state.editingId === id) state.editingId = null;
+  if (state.editingId === id) resetAnalysisEditor();
+  if (state.pendingAttachmentId === id) state.pendingAttachmentId = null;
+  if (state.auditionAnnotationId === id) pauseAudioTransport();
   saveProject();
   renderTimeline();
   showToast("annotation deleted");
@@ -3177,27 +3517,32 @@ function selectionFromAnnotation(annotation) {
   };
 }
 
+// Category arrays are replaced on edit, import and undo. Build their ordered colours once.
+const categoryPalettes = new WeakMap();
 function categoryColour(category) {
-  if (CATEGORY_COLOURS[category]) return CATEGORY_COLOURS[category];
-
-  // Build custom colours in category order, moving any crowded hue until it has useful separation.
-  const usedHues = [...CATEGORY_HUES];
-  const customCategories = state.categories.filter((item) => !CATEGORY_COLOURS[item]);
-  for (const customCategory of customCategories) {
-    let hash = 0;
-    for (const character of String(customCategory || "")) hash = (hash * 31 + character.charCodeAt(0)) | 0;
-    let hue = Math.abs(hash * 137.508) % 360;
-    let attempts = 0;
-    const circularDistance = (first, second) => Math.min(Math.abs(first - second), 360 - Math.abs(first - second));
-    while (usedHues.some((usedHue) => circularDistance(hue, usedHue) < 24) && attempts < 36) {
-      hue = (hue + 29) % 360;
-      attempts += 1;
+  if (Object.hasOwn(CATEGORY_COLOURS, category)) return CATEGORY_COLOURS[category];
+  let palette = categoryPalettes.get(state.categories);
+  if (!palette) {
+    palette = new Map();
+    const usedHues = [...CATEGORY_HUES];
+    for (const name of state.categories) {
+      if (Object.hasOwn(CATEGORY_COLOURS, name)) continue;
+      let hash = 0;
+      for (const character of name) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+      let hue = Math.abs(hash * 137.508) % 360;
+      for (let attempts = 0; attempts < 36; attempts++) {
+        if (!usedHues.some((used) => {
+          const distance = Math.abs(hue - used);
+          return Math.min(distance, 360 - distance) < 24;
+        })) break;
+        hue = (hue + 29) % 360;
+      }
+      usedHues.push(hue);
+      palette.set(name, `hsl(${hue.toFixed(1)} 72% 58%)`);
     }
-    usedHues.push(hue);
-    if (customCategory === category) return `hsl(${hue.toFixed(1)} 72% 58%)`;
+    categoryPalettes.set(state.categories, palette);
   }
-
-  return "hsl(285 72% 58%)";
+  return palette.get(category) || "hsl(285 72% 58%)";
 }
 
 function renderAnnotationRegions() {
@@ -3281,7 +3626,7 @@ ui.showAnnotationsButton.addEventListener("pointerdown", (event) => event.stopPr
 ui.showAnnotationsButton.addEventListener("click", (event) => {
   event.stopPropagation();
   state.showAnnotationRegions = !state.showAnnotationRegions;
-  localStorage.setItem("music-analyser-show-annotations", state.showAnnotationRegions ? "on" : "off");
+  storage.setItem("music-analyser-show-annotations", state.showAnnotationRegions ? "on" : "off");
   renderAnnotationRegions();
 });
 
@@ -3297,7 +3642,7 @@ function syncHoverRegionsButton() {
 
 ui.hoverRegionsButton.addEventListener("click", () => {
   state.showHoverRegions = !state.showHoverRegions;
-  localStorage.setItem("music-analyser-hover-regions", state.showHoverRegions ? "on" : "off");
+  storage.setItem("music-analyser-hover-regions", state.showHoverRegions ? "on" : "off");
   if (!state.showHoverRegions) {
     state.hoveredAnnotation = null;
     state.hoveredCard = null;
@@ -3322,38 +3667,132 @@ function legacyProjectStorageKey() {
 function saveProject() {
   const key = projectStorageKey();
   if (!key) return;
-  localStorage.setItem(key, JSON.stringify({
+  storage.setItem(state.projectWriteKey || key, JSON.stringify({
     annotations: state.annotations,
     sections: state.sections,
     categories: state.categories,
     artistName: state.artistName,
     trackTitle: state.trackTitle,
-    artworkDataUrl: state.artworkDataUrl,
+    artworkDataUrl: state.artworkThumbnailDataUrl,
+    identityChecked: true,
+    hasAlternateAutosave: Boolean(state.alternateAutosave),
     filePath: state.filePath,
     audioDownloadUrl: state.audioDownloadUrl,
     rhythmGrid: state.rhythmGrid,
+    mixLab: mixLab?.getSessionData() ?? null,
   }));
   rememberRecentAnalysis(key);
 }
 
+// Compare editable work, excluding machine paths, generated thumbnails and automatic measurements.
+function projectEdits(saved) {
+  const edits = {};
+  if (saved?.annotations?.length) edits.annotations = saved.annotations;
+  if (saved?.sections?.length) edits.sections = saved.sections;
+  if (Array.isArray(saved?.categories) && saved.categories.some((name) => !DEFAULT_CATEGORIES.includes(name))) edits.categories = saved.categories;
+  if (saved?.rhythmGrid?.source === "manual") edits.rhythmGrid = saved.rhythmGrid;
+  if (saved?.mixLab?.reference || saved?.mixLab?.levelMatch === false) edits.mixLab = saved.mixLab;
+  if (saved?.audioDownloadUrl) edits.audioDownloadUrl = saved.audioDownloadUrl;
+  if (saved?.artistName && saved.artistName !== state.artistName) edits.artist = saved.artistName;
+  if (saved?.trackTitle && saved.trackTitle !== state.trackTitle) edits.title = saved.trackTitle;
+  return JSON.stringify(edits);
+}
+
+function alternateSessionData(saved) {
+  const session = buildSessionData();
+  const clean = normaliseAnalysis(saved, analysisBounds());
+  session.annotations = clean.annotations;
+  session.sections = clean.sections;
+  session.categories = clean.categories;
+  session.track.artist = typeof saved.artistName === "string" ? saved.artistName : session.track.artist;
+  session.track.title = typeof saved.trackTitle === "string" ? saved.trackTitle : session.track.title;
+  session.audioDownloadUrl = normaliseSharedAudioUrl(saved.audioDownloadUrl) || null;
+  session.rhythmGrid = isUsableRhythmGrid(saved.rhythmGrid) ? normaliseRhythmGrid(saved.rhythmGrid) : state.detectedRhythmGrid;
+  session.mixLab = window.MusicAnalyserMixLab.portableComparison(saved.mixLab?.reference, saved.mixLab?.levelMatch !== false);
+  return session;
+}
+
+document.getElementById("exportAlternateAutosave").addEventListener("click", async () => {
+  if (!state.alternateAutosave) return;
+  try {
+    const json = JSON.stringify(alternateSessionData(state.alternateAutosave), null, 2);
+    if (await saveJsonExport(`${safeAnalysisName()}-alternate.json`, json)) showToast("alternate session saved");
+  } catch { showToast("could not save the alternate session"); }
+});
+
 function restoreProject() {
+  state.projectWriteKey = null;
+  state.alternateAutosave = null;
+  document.getElementById("alternateAutosave").hidden = true;
+  ui.projectRecoveryWarning.hidden = true;
   state.annotations = [];
   state.sections = [];
   state.categories = [...DEFAULT_CATEGORIES];
   const key = projectStorageKey();
   if (!key) return;
 
+  mixLab?.setPrimary(state.audioBuffer, state.audioUrl, `${state.artistName} · ${state.trackTitle}`);
+  // Earlier desktop builds rounded modification times when reopening a recent recording.
+  // Verify the old identity using its native timestamp or the old recent shortcut.
+  const split = key.lastIndexOf("::");
+  const earlierRecentKey = key.slice(0, split + 2) + (Number(key.slice(split + 2)) + 1);
+  const roundedRecent = state.filePath && readRecentAnalyses().some(
+    (item) => item.filePath === state.filePath && item.projectKey === earlierRecentKey);
+  const roundedRaw = state.filePath && (state.hasRoundedTimestamp || roundedRecent) ? storage.getItem(earlierRecentKey) : null;
+  let raw = storage.getItem(key);
+  let writeKey = key;
+  if (raw === null && storage.getItem(key + "::recovered") !== null) {
+    // The corrupt source may have used a legacy key which has since left Recents.
+    writeKey += "::recovered";
+    raw = storage.getItem(writeKey);
+    ui.projectRecoveryWarning.hidden = false;
+  }
+  if (raw === null) {
+    raw = storage.getItem(legacyProjectStorageKey()) ?? roundedRaw;
+  }
+  let saved;
+  while (raw !== null) {
+    try {
+      saved = JSON.parse(raw);
+      if (!saved || !Array.isArray(saved.annotations)) throw new Error("Missing annotations");
+      break;
+    } catch {
+      saved = null;
+      // Leave unreadable data intact. Subsequent edits use a separate local save.
+      writeKey += "::recovered";
+      raw = storage.getItem(writeKey);
+      ui.projectRecoveryWarning.hidden = false;
+    }
+  }
+  // A file may have been opened both ways before the timestamp correction. Prefer real work
+  // over an untouched workspace once. When both copies contain edits, keep both available.
+  if (roundedRaw && (!saved?.identityChecked || saved.hasAlternateAutosave)) {
+    try {
+      const earlier = JSON.parse(roundedRaw);
+      if (Array.isArray(earlier?.annotations)) {
+        const previousEdits = projectEdits(earlier);
+        const currentEdits = projectEdits(saved);
+        if (!saved?.identityChecked && currentEdits === "{}" && previousEdits !== "{}") {
+          saved = earlier;
+        } else if (saved?.hasAlternateAutosave || (previousEdits !== "{}" && previousEdits !== currentEdits)) {
+          state.alternateAutosave = earlier;
+          document.getElementById("alternateAutosave").hidden = false;
+        }
+      }
+    } catch { /* An unreadable alternate never replaces a usable active save. */ }
+  }
+  state.projectWriteKey = writeKey;
   try {
-    const saved = JSON.parse(localStorage.getItem(key) || localStorage.getItem(legacyProjectStorageKey()));
-    if (Array.isArray(saved?.annotations)) state.annotations = saved.annotations.map(normaliseAnnotation);
-    if (Array.isArray(saved?.sections)) state.sections = saved.sections.filter(isUsableSelection).map(normaliseSection);
-    if (Array.isArray(saved?.categories)) state.categories = [...new Set([...DEFAULT_CATEGORIES, ...saved.categories])];
-    if (saved?.artistName) state.artistName = saved.artistName;
-    if (saved?.trackTitle) state.trackTitle = saved.trackTitle;
+    const clean = normaliseAnalysis(saved, analysisBounds());
+    state.annotations = clean.annotations;
+    state.sections = clean.sections;
+    state.categories = clean.categories;
+    if (typeof saved?.artistName === "string" && saved.artistName) state.artistName = saved.artistName;
+    if (typeof saved?.trackTitle === "string" && saved.trackTitle) state.trackTitle = saved.trackTitle;
     if (saved?.artworkDataUrl && !state.artworkDataUrl) state.artworkDataUrl = saved.artworkDataUrl;
-    if (saved?.filePath && !state.filePath) state.filePath = saved.filePath;
     state.audioDownloadUrl = normaliseSharedAudioUrl(saved?.audioDownloadUrl);
     if (isUsableRhythmGrid(saved?.rhythmGrid)) state.rhythmGrid = normaliseRhythmGrid(saved.rhythmGrid);
+    mixLab?.restoreSessionData(saved?.mixLab);
   } catch (error) {
     console.warn("Saved analysis could not be read:", error);
   }
@@ -3371,13 +3810,13 @@ function rememberRecentAnalysis(projectKey) {
     annotationCount: state.annotations.length,
     updatedAt: new Date().toISOString(),
   });
-  localStorage.setItem("music-analyser-recent-analyses", JSON.stringify(recent.slice(0, 12)));
+  storage.setItem("music-analyser-recent-analyses", JSON.stringify(recent.slice(0, 12)));
   renderRecentAnalyses();
 }
 
 function readRecentAnalyses() {
   try {
-    const saved = JSON.parse(localStorage.getItem("music-analyser-recent-analyses"));
+    const saved = JSON.parse(storage.getItem("music-analyser-recent-analyses"));
     return Array.isArray(saved) ? saved.filter((item) => item?.filePath && item?.projectKey) : [];
   } catch {
     return [];
@@ -3438,25 +3877,30 @@ function renderRecentAnalyses() {
 
 async function openRecentAnalysis(item) {
   if (!nativeAudioApi?.loadAudioFile) return showToast("recent analyses need the desktop app");
+  const generation = ++audioLoadGeneration;
+  cancelRecordingAnalysis();
+  audioLoadInProgress = true;
   setProjectStatus("opening recent analysis…");
   try {
     const nativeFile = await nativeAudioApi.loadAudioFile(item.filePath);
-    const file = new File([nativeFile.data], nativeFile.name, {
-      type: nativeFile.type,
-      lastModified: nativeFile.lastModified,
-    });
-    await loadAudioFile(file, { path: nativeFile.path, metadata: nativeFile.metadata });
-    showToast("recent analysis opened");
+    if (generation !== audioLoadGeneration) return;
+    const file = new File([nativeFile.data], nativeFile.name, { type: nativeFile.type, lastModified: nativeFile.lastModified });
+    if (await loadAudioFile(file, { path: nativeFile.path, metadata: nativeFile.metadata, generation })) showToast("recent analysis opened");
   } catch (error) {
-    console.warn("Recent analysis could not be opened:", error);
-    forgetRecentAnalysis(item);
-    showToast("that recording could not be found");
+    if (generation !== audioLoadGeneration) return;
+    console.warn("Recent analysis could not be opened:", error.name);
+    if (state.audioBuffer) syncTrackIdentity();
+    else setProjectStatus("recording unavailable");
+    showToast("that recording is unavailable — choose the file again");
+    // A disconnected drive is temporary. Keep the shortcut and saved notes.
+  } finally {
+    if (generation === audioLoadGeneration) audioLoadInProgress = false;
   }
 }
 
 function forgetRecentAnalysis(itemToForget) {
   const recent = readRecentAnalyses().filter((item) => item.projectKey !== itemToForget.projectKey);
-  localStorage.setItem("music-analyser-recent-analyses", JSON.stringify(recent));
+  storage.setItem("music-analyser-recent-analyses", JSON.stringify(recent));
   renderRecentAnalyses();
 }
 
@@ -3473,9 +3917,15 @@ ui.copyButton.addEventListener("click", async () => {
     temporary.value = exportText;
     document.body.append(temporary);
     temporary.select();
-    document.execCommand("copy");
-    temporary.remove();
-    showToast("analysis copied to clipboard");
+    try {
+      const copied = document.execCommand("copy");
+      showToast(copied ? "analysis copied to clipboard" : "clipboard unavailable · save a JSON session instead");
+    } catch {
+      showToast("clipboard unavailable · save a JSON session instead");
+    } finally {
+      temporary.remove();
+      ui.copyButton.focus();
+    }
   }
 });
 
@@ -3502,6 +3952,10 @@ function buildTextExport() {
         ? ` · ${formatFrequency(annotation.minFrequency)}–${formatFrequency(annotation.maxFrequency)}`
         : "";
       lines.push(`${formatRangeWithTime(annotation.start, annotation.end)}${frequency}`);
+      for (const area of annotation.links || []) {
+        const band = area.source === "spectrogram" ? ` · ${formatFrequency(area.minFrequency)}–${formatFrequency(area.maxFrequency)}` : "";
+        lines.push(`Linked region · ${formatRangeWithTime(area.start, area.end)}${band}`);
+      }
       lines.push(annotation.note, "");
     });
     if (categoryIndex < usedCategories.length - 1) lines.push("");
@@ -3548,13 +4002,14 @@ function formatRangeWithTime(start, end) {
 }
 
 function formatTime(seconds, includeMilliseconds = false) {
-  const safeSeconds = Math.max(0, Number(seconds) || 0);
-  const wholeSeconds = Math.floor(safeSeconds);
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const totalMilliseconds = Math.round(safeSeconds * 1000);
+  const wholeSeconds = includeMilliseconds ? Math.floor(totalMilliseconds / 1000) : Math.floor(safeSeconds);
   const minutes = Math.floor(wholeSeconds / 60);
   const remainder = wholeSeconds % 60;
   const base = `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
   if (!includeMilliseconds) return base;
-  const milliseconds = Math.floor((safeSeconds - wholeSeconds) * 1000);
+  const milliseconds = totalMilliseconds % 1000;
   return `${base}.${String(milliseconds).padStart(3, "0")}`;
 }
 
@@ -3585,26 +4040,6 @@ function ratioFromFrequency(frequency, nyquist) {
 
 renderCategoryOptions();
 renderRecentAnalyses();
-
-// Native details elements open instantly, so this small height animation makes
-// the help and recent-analysis drawers feel calmer without changing their HTML.
-document.querySelectorAll("details").forEach((details) => {
-  const summary = details.querySelector(":scope > summary");
-  if (!summary) return;
-  summary.addEventListener("click", (event) => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    event.preventDefault();
-    const startHeight = details.offsetHeight;
-    if (!details.open) details.open = true;
-    const endHeight = details.open && startHeight < details.scrollHeight ? details.scrollHeight : summary.offsetHeight;
-    details.style.overflow = "hidden";
-    details.animate([{ height: `${startHeight}px` }, { height: `${endHeight}px` }], { duration: 180, easing: "ease-out" })
-      .finished.then(() => {
-        if (endHeight === summary.offsetHeight) details.open = false;
-        details.style.removeProperty("overflow");
-      });
-  });
-});
 
 /*
   Adding ?demo=1 to the local URL creates a short synthetic recording. This is

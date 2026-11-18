@@ -50,13 +50,16 @@
     },
   ];
 
-  function analyseLoudness(audioBuffer) {
+  function analyseLoudness(audioBuffer, { detailed = false } = {}) {
     const sampleRate = Number(audioBuffer.sampleRate);
     const channelCount = Number(audioBuffer.numberOfChannels);
     const sampleCount = Number(audioBuffer.length || audioBuffer.getChannelData(0).length);
 
     if (!(sampleRate > 0) || !(channelCount > 0) || !(sampleCount > 0)) {
-      return { peakDb: -Infinity, rmsDb: -Infinity, lufs: -Infinity };
+      return detailed
+        ? { peakDb: -Infinity, rmsDb: -Infinity, lufs: -Infinity, momentary: [], shortTerm: [],
+          maxMomentaryLufs: null, maxShortTermLufs: null, loudnessRange: null }
+        : { peakDb: -Infinity, rmsDb: -Infinity, lufs: -Infinity };
     }
 
     // BS.1770 uses complete 400 ms blocks with 75% overlap, which means a new
@@ -67,6 +70,12 @@
       ? 0
       : 1 + Math.floor((sampleCount - blockLength) / blockStep);
     const blockPowers = new Float64Array(blockCount);
+    // At standard sample rates every 400 ms block is four 100 ms segments.
+    // Collect each segment once instead of shifting a sample-sized ring for
+    // every channel. Keep the exact complete-block path at unusual rates.
+    const blocksAlign = blockLength === 4 * blockStep;
+    const segmentCount = blockCount && (blocksAlign || detailed) ? Math.floor(sampleCount / blockStep) : 0;
+    const segmentPowers = new Float64Array(segmentCount);
     const [shelf, highPass] = K_WEIGHTING_48K.map((filter) => remapBiquad(filter, sampleRate));
 
     let peak = 0;
@@ -76,10 +85,14 @@
     for (let channel = 0; channel < channelCount; channel += 1) {
       const samples = audioBuffer.getChannelData(channel);
       const loudnessWeight = channelWeight(channel, channelCount);
-      const recentPowers = blockCount ? new Float64Array(blockLength) : null;
+      const recentPowers = blockCount && !blocksAlign ? new Float64Array(blockLength) : null;
       let recentPowerSum = 0;
       let recentPowerPosition = 0;
       let nextBlock = 0;
+      let nextBlockEnd = blockLength;
+      let segmentPower = 0;
+      let segment = 0;
+      let nextSegmentEnd = blockStep;
 
       // Each filter stage keeps two small state values. Direct Form II
       // Transposed is both efficient and numerically stable for this job.
@@ -110,25 +123,85 @@
         highPassState2 = highPass.b2 * shelfOutput - highPass.a2 * filtered;
 
         const filteredPower = filtered * filtered;
-        recentPowerSum += filteredPower - recentPowers[recentPowerPosition];
-        recentPowers[recentPowerPosition] = filteredPower;
-        recentPowerPosition = (recentPowerPosition + 1) % blockLength;
-
         const samplesSeen = index + 1;
-        if (samplesSeen >= blockLength && (samplesSeen - blockLength) % blockStep === 0) {
-          blockPowers[nextBlock] += loudnessWeight * (recentPowerSum / blockLength);
-          nextBlock += 1;
+        segmentPower += filteredPower;
+        if (samplesSeen === nextSegmentEnd) {
+          if (segment < segmentCount) segmentPowers[segment] += loudnessWeight * segmentPower / blockStep;
+          segmentPower = 0;
+          segment += 1;
+          nextSegmentEnd += blockStep;
+        }
+        if (recentPowers) {
+          recentPowerSum += filteredPower - recentPowers[recentPowerPosition];
+          recentPowers[recentPowerPosition] = filteredPower;
+          recentPowerPosition += 1;
+          if (recentPowerPosition === blockLength) recentPowerPosition = 0;
+          if (samplesSeen === nextBlockEnd) {
+            blockPowers[nextBlock] += loudnessWeight * recentPowerSum / blockLength;
+            nextBlock += 1;
+            nextBlockEnd += blockStep;
+          }
         }
       }
     }
 
     const rms = Math.sqrt(rmsSum / Math.max(1, rmsCount));
 
-    return {
+    if (blocksAlign) {
+      for (let index = 0; index < blockCount; index += 1) {
+        blockPowers[index] = (segmentPowers[index] + segmentPowers[index + 1]
+          + segmentPowers[index + 2] + segmentPowers[index + 3]) / 4;
+      }
+    }
+
+    const basic = {
       peakDb: amplitudeToDb(peak),
       rmsDb: amplitudeToDb(rms),
       lufs: integratedLoudnessFromBlocks(blockPowers),
     };
+    if (!detailed) return basic;
+
+    const stepSeconds = blockStep / sampleRate;
+    const momentary = Array.from(blockPowers, (power, index) => ({
+      time: index * stepSeconds + blockLength / (2 * sampleRate),
+      lufs: powerToLufs(power),
+    }));
+    const shortTerm = threeSecondSeries(segmentPowers, stepSeconds);
+    return { ...basic, momentary, shortTerm,
+      maxMomentaryLufs: maximumLufs(momentary),
+      maxShortTermLufs: maximumLufs(shortTerm),
+      loudnessRange: loudnessRangeFromShortTerm(shortTerm.map(({ lufs }) => lufs)),
+    };
+  }
+
+  function threeSecondSeries(segmentPowers, stepSeconds) {
+    const windowSegments = 30;
+    const points = [];
+    for (let start = 0; start + windowSegments <= segmentPowers.length; start += 1) {
+      let power = 0;
+      for (let index = start; index < start + windowSegments; index += 1) power += segmentPowers[index];
+      points.push({ time: (start + windowSegments / 2) * stepSeconds, lufs: powerToLufs(power / windowSegments) });
+    }
+    return points;
+  }
+
+  function maximumLufs(points) {
+    let max = -Infinity;
+    for (const point of points) max = Math.max(max, point.lufs);
+    return Number.isFinite(max) ? max : null;
+  }
+
+  // EBU Tech 3342 (2023), https://tech.ebu.ch/docs/tech/tech3342.pdf.
+  // This implementation uses complete three-second windows from the decoded
+  // signal at 100 ms hops, and does not append synthetic trailing silence.
+  function loudnessRangeFromShortTerm(values) {
+    const absolute = values.filter((value) => Number.isFinite(value) && value >= ABSOLUTE_GATE_LUFS);
+    if (absolute.length < 2) return null;
+    const relativeGate = 10 * Math.log10(mean(absolute.map((value) => 10 ** (value / 10)))) - 20;
+    const gated = absolute.filter((value) => value >= relativeGate).sort((a, b) => a - b);
+    if (gated.length < 2) return null;
+    const indexAt = (fraction) => Math.round((gated.length - 1) * fraction);
+    return gated[indexAt(0.95)] - gated[indexAt(0.10)];
   }
 
   function integratedLoudnessFromBlocks(blockPowers) {

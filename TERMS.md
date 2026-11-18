@@ -2,7 +2,7 @@
 
 **Music Analyser**
 
-Effective date: 20 July 2026
+Effective date: 18 November 2026
 Developer: Pat Carroll
 
 These terms set out the conditions for using Music Analyser.

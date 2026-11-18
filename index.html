@@ -3,38 +3,46 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'" />
     <meta name="description" content="A focused desktop workspace for annotating recordings by time and frequency." />
     <title>music analyser</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <!-- The small version query makes Chrome fetch the latest local assets after an update. -->
-    <link rel="stylesheet" href="styles.css?v=20260720-1" />
+    <link rel="stylesheet" href="styles.css?v=030" />
   </head>
   <body>
     <!-- The top bar keeps global actions available while the analysis view scrolls. -->
     <header class="topbar">
       <div class="topbar__inner">
-        <a class="wordmark" href="#workspace" aria-label="Music analyser home">music analyser</a>
+        <a class="wordmark" href="#workspace" aria-label="Music analyser home">Music Analyser</a>
         <div class="topbar__status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
           <span id="projectStatus">no recording loaded</span>
         </div>
         <div class="topbar__actions">
-          <button id="shareAnalysisButton" class="text-button" type="button" disabled>share analysis</button>
-          <button id="newAnalysisButton" class="text-button" type="button">new analysis</button>
-          <button id="themeButton" class="text-button" type="button" aria-label="Switch colour theme">[ ○ day ]</button>
+          <button id="newAnalysisButton" class="text-button" type="button">Open</button>
+          <details class="session-menu" id="sessionMenu">
+            <summary>Session</summary>
+            <div class="session-menu__items">
+              <button id="loadSessionButton" type="button">Load session…</button>
+              <button id="saveSessionButton" type="button" disabled>Save session…</button>
+              <button id="shareAnalysisButton" type="button" disabled>Share analysis…</button>
+            </div>
+          </details>
+          <button id="themeButton" class="text-button" type="button" aria-label="Switch colour theme">Day</button>
         </div>
-        <input id="sessionInput" class="visually-hidden" type="file" accept="application/json,.json" />
+        <input id="sessionInput" type="file" accept="application/json,.json" hidden />
       </div>
     </header>
 
-    <!-- macOS File menu commands activate these hidden controls through preload.cjs. -->
-    <button id="loadSessionButton" type="button" hidden>load session</button>
-    <button id="saveSessionButton" type="button" hidden disabled>save session</button>
-
     <div class="app-shell">
     <aside class="side-rail" aria-label="Analysis navigation">
+      <p id="storageWarning" class="storage-warning" role="alert" hidden>Automatic saving has failed in this session. Your current notes are still available here. Save a JSON session before closing the app.</p>
+      <p id="projectRecoveryWarning" class="storage-warning" role="status" hidden>The previous autosave for this recording could not be read. The original has been kept. New edits are saved separately. You can load a backed-up JSON session to recover your notes.</p>
+      <div id="alternateAutosave" class="autosave-notice" role="group" aria-labelledby="alternateAutosaveMessage" hidden>
+        <p id="alternateAutosaveMessage">An earlier version saved a second analysis for this recording.</p>
+        <button id="exportAlternateAutosave" class="quiet-action" type="button">Save alternate session…</button>
+      </div>
+      <a id="mixLabShortcut" class="mixlab-shortcut" href="#mixLabPanel" hidden>Open MixLab</a>
       <!-- The help drawer stays out of the main workflow until the user opens it. -->
       <details class="instructions-drawer">
         <summary>how to use</summary>
@@ -43,13 +51,13 @@
           <ol>
             <li>Check the detected BPM and bar lines in <strong>tempo &amp; beat grid</strong>. You can edit the tempo, nudge the grid, or click the waveform and set that playhead position as Bar 1.</li>
             <li>Drag across the waveform to select a time range.</li>
-            <li>Drag a box on the spectrogram to select time and frequency together.</li>
+            <li>Drag a box on the spectrogram to select time and frequency together. You can also enter the exact range in the annotation panel.</li>
             <li>Choose a category, write what you hear, then add the annotation.</li>
             <li>Use the play or loop symbols on a saved region to hear that exact area; spectrogram regions are frequency-isolated.</li>
             <li>Turn any selected time range into an arrangement section. Its edges snap to bar starts, then you can click its block to give it your own name.</li>
             <li>Turn on the metronome to hear the current beat grid. A higher ping marks beat 1 of each bar, and manual tempo or grid corrections take effect immediately.</li>
             <li>Use the spectrum band buttons, pitch-locked speed control, search, and optional read-ahead notes while listening.</li>
-            <li>Hover over a card and press +, drag any extra regions, then press + again to finish.</li>
+            <li>Press + on a note to link more regions. Drag each region or enter its exact range, then press + again to finish.</li>
             <li>Use focused view when you want the waveform and spectrogram to fill the window.</li>
             <li>Save or share an editable session. You can include a private audio-download link so the recipient can load the same recording.</li>
           </ol>
@@ -61,7 +69,7 @@
         <summary>about &amp; legal</summary>
         <div class="legal-drawer__body">
           <p><strong>Music Analyser</strong> is a local desktop workspace for annotating recordings by time and frequency.</p>
-          <p>Version <span data-app-version>0.2.3</span><br />© 2026 Pat Carroll. All rights reserved.</p>
+          <p>Version <span data-app-version>0.3.0</span><br />© 2026 Pat Carroll. All rights reserved.</p>
           <div class="legal-drawer__actions">
             <button type="button" class="text-button legal-link" data-legal-document="privacy">privacy policy</button>
             <button type="button" class="text-button legal-link" data-legal-document="terms">terms of use</button>
@@ -80,20 +88,11 @@
     <main id="workspace" class="workspace">
       <!-- The empty state is already the analysis workspace, waiting quietly for an audio file. -->
       <section id="emptyState" class="empty-state" aria-label="Empty music analysis workspace">
-        <div class="empty-recording-head" aria-hidden="true">
-          <span>artist name</span>
-          <strong>track title</strong>
-        </div>
         <div id="audioDropzone" class="empty-field">
-          <div class="section-label"><h2>recording field</h2><span>drag to select</span></div>
-          <div class="empty-transport" aria-hidden="true"><span>play</span><span>00:00.000 / 00:00.000</span><i></i></div>
-          <div class="empty-visuals" aria-hidden="true">
-            <div class="empty-ruler"><span>time</span><i></i></div>
-            <div class="empty-waveform"><span>waveform</span><i></i></div>
-            <div class="empty-spectrum"><span>spectrogram</span><i></i></div>
-          </div>
-          <label class="drop-audio-action" for="audioInput">drop audio file here <span>or click to choose</span></label>
-          <input id="audioInput" class="visually-hidden" type="file" accept="audio/*" />
+          <div class="section-label"><h2>Open a recording</h2></div>
+          <button type="button" class="drop-audio-action" id="chooseRecordingButton">Choose audio file</button>
+          <p>Or drop a recording here to start an analysis.</p>
+          <input id="audioInput" type="file" accept="audio/*,.wav,.aif,.aiff,.aifc,.flac,.mp3,.m4a,.alac,.aac,.ogg,.opus,.webm,.mp4,.weba" hidden />
         </div>
       </section>
 
@@ -125,12 +124,11 @@
         <div class="analysis-workspace-grid">
         <section class="visual-panel" aria-labelledby="visualHeading">
           <div class="section-label">
-            <h2 id="visualHeading">recording field</h2>
+            <h2 id="visualHeading">Recording field</h2>
             <div class="visual-heading-actions">
               <span>drag to select</span>
-              <!-- This compact button will open the tempo controls once app.js wires in the behaviour. -->
-              <button id="rhythmGridToggle" class="beat-grid-toggle" type="button" aria-expanded="false" aria-controls="rhythmGridPanel">
-                <span>tempo &amp; beat grid</span>
+              <button id="rhythmGridToggle" class="beat-grid-toggle" type="button" aria-expanded="false" aria-controls="rhythmGridPanel" aria-labelledby="rhythmGridLabel rhythmGridSummary">
+                <span id="rhythmGridLabel">Tempo and beat grid</span>
                 <strong id="rhythmGridSummary">tempo pending</strong>
               </button>
               <button id="focusedViewButton" class="toggle-action" type="button" aria-pressed="false">focused view</button>
@@ -261,9 +259,9 @@
                   <div id="spectrumBandControls" class="spectrum-band-controls" aria-label="Frequency listening presets">
                     <button type="button" data-band="sub">sub</button>
                     <button type="button" data-band="bass">bass</button>
-                    <button type="button" data-band="low-mids">low mids</button>
+                    <button type="button" data-band="low-mids" aria-label="Low mids"><span class="band-name-full">low mids</span><span class="band-name-short" aria-hidden="true">LM</span></button>
                     <button type="button" data-band="mids">mids</button>
-                    <button type="button" data-band="high-mids">high mids</button>
+                    <button type="button" data-band="high-mids" aria-label="High mids"><span class="band-name-full">high mids</span><span class="band-name-short" aria-hidden="true">HM</span></button>
                     <button type="button" data-band="highs">highs</button>
                     <button type="button" data-band="air">air</button>
                   </div>
@@ -290,7 +288,7 @@
         <!-- Arrangement chapters are deliberately separate from analytical categories. -->
         <section class="arrangement-panel" aria-labelledby="arrangementHeading">
           <div class="section-label section-label--arrangement">
-            <div><h2 id="arrangementHeading">arrangement</h2><span id="arrangementSummary">no section markers yet</span></div>
+            <div><h2 id="arrangementHeading">Arrangement</h2><span id="arrangementSummary">no section markers yet</span></div>
             <form id="sectionMarkerForm" class="section-marker-form">
               <button type="submit">add marker</button>
             </form>
@@ -300,33 +298,9 @@
           </div>
         </section>
 
-        <section class="notes-panel" aria-labelledby="notesHeading">
-          <div class="section-label section-label--notes">
-            <div>
-              <h2 id="notesHeading">analysis timeline</h2>
-              <span id="timelineSummary">no annotations yet</span>
-            </div>
-            <div class="notes-actions">
-              <label class="annotation-search"><span>search</span><input id="annotationSearch" type="search" placeholder="annotations" autocomplete="off" /></label>
-              <button id="annotationPromptsButton" class="toggle-action" type="button" aria-pressed="false">read ahead: off</button>
-              <button id="hoverRegionsButton" class="toggle-action" type="button" aria-pressed="true">hover regions: on</button>
-              <label class="filter-label">show
-                <select id="filterSelect"><option value="all">all categories</option></select>
-              </label>
-              <button id="copyButton" class="secondary-action" type="button">copy text</button>
-            </div>
-          </div>
-          <div id="timeline" class="timeline">
-            <div id="timelineEmpty" class="timeline-empty">
-              <span>00</span>
-              <p>Your annotations will collect here in chronological order.</p>
-            </div>
-          </div>
-        </section>
-
         <section class="composer-panel" aria-labelledby="composerHeading">
           <div class="section-label">
-            <h2 id="composerHeading">new annotation</h2>
+            <h2 id="composerHeading">Annotation</h2>
             <button id="clearSelectionButton" class="quiet-action" type="button">clear selection</button>
           </div>
           <form id="annotationForm" class="annotation-form">
@@ -352,9 +326,89 @@
               <button id="saveCategoryButton" class="quiet-action" type="button">save category</button>
             </div>
           </form>
+          <details class="region-entry" id="regionEntry">
+            <summary>Enter a time or frequency range</summary>
+            <form id="regionForm">
+              <div class="region-entry-fields">
+                <label>Start (s) <input id="regionStart" type="number" min="0" step="0.001" required /></label>
+                <label>End (s) <input id="regionEnd" type="number" min="0" step="0.001" required /></label>
+                <label>Low (Hz) <input id="regionLow" type="number" min="20" step="any" placeholder="Optional" /></label>
+                <label>High (Hz) <input id="regionHigh" type="number" min="20" step="any" placeholder="Optional" /></label>
+              </div>
+              <p id="regionError" class="region-entry-error" role="alert" hidden></p>
+              <button type="submit" class="quiet-action">Set range</button>
+            </form>
+          </details>
+        </section>
+
+        <section class="notes-panel" aria-labelledby="notesHeading">
+          <div class="section-label section-label--notes">
+            <div>
+              <h2 id="notesHeading">Analysis timeline</h2>
+              <span id="timelineSummary">no annotations yet</span>
+            </div>
+            <div class="notes-actions">
+              <label class="annotation-search"><span>search</span><input id="annotationSearch" type="search" placeholder="annotations" autocomplete="off" /></label>
+              <button id="annotationPromptsButton" class="toggle-action" type="button" aria-pressed="false">read ahead: off</button>
+              <button id="hoverRegionsButton" class="toggle-action" type="button" aria-pressed="true">hover regions: on</button>
+              <label class="filter-label">show
+                <select id="filterSelect"><option value="all">all categories</option></select>
+              </label>
+              <button id="copyButton" class="secondary-action" type="button">copy text</button>
+            </div>
+          </div>
+          <div id="timeline" class="timeline">
+            <div id="timelineEmpty" class="timeline-empty">
+              <span>00</span>
+              <p>Your annotations will collect here in chronological order.</p>
+            </div>
+          </div>
         </section>
         </div>
 
+        <details class="mixlab-panel" id="mixLabPanel">
+          <summary><span>MixLab</span><span class="mixlab-summary-caption">Loudness, stereo, tone and A/B comparison</span></summary>
+          <div class="mixlab-body">
+            <div class="mixlab-track-grid">
+              <section class="mixlab-track" aria-label="Current recording">
+                <h3 id="mixPrimaryName">A · Current recording</h3>
+                <p id="mixPrimaryStatus" class="mixlab-status" role="status"></p>
+                <button id="mixPlayA" type="button" disabled>Play A</button>
+              </section>
+              <section class="mixlab-track" aria-label="Reference recording">
+                <h3 id="mixReferenceName">B · Reference</h3>
+                <p id="mixReferenceStatus" class="mixlab-status" role="status">Choose a reference to compare.</p>
+                <div class="mixlab-actions">
+                  <button id="mixChooseReference" type="button">Choose reference</button>
+                  <button id="mixPlayB" type="button" disabled>Play B</button>
+                  <button id="mixRemoveReference" type="button" hidden>Remove</button>
+                </div>
+                <input id="mixReferenceInput" type="file" accept="audio/*,.wav,.aif,.aiff,.aifc,.flac,.mp3,.m4a,.alac,.aac,.ogg,.opus,.webm,.mp4,.weba" hidden />
+              </section>
+            </div>
+            <div class="mixlab-controls">
+              <label><input id="mixLevelMatch" type="checkbox" checked /> Match playback loudness</label>
+              <p id="mixPlaybackStatus" class="mixlab-status" role="status"></p>
+              <div class="mixlab-actions">
+                <button id="mixCopyReport" type="button" disabled>Copy report</button>
+                <button id="mixSaveReport" type="button" disabled>Export measurements</button>
+              </div>
+            </div>
+            <div id="mixResults" class="mixlab-results" hidden>
+              <figure class="mixlab-chart">
+                <figcaption id="mixLoudnessCaption">Loudness over time (LUFS)</figcaption>
+                <canvas id="mixLoudnessChart" role="img" aria-labelledby="mixLoudnessCaption"></canvas>
+                <p id="mixLoudnessDescription"></p>
+              </figure>
+              <div id="mixMeasurements"></div>
+              <div id="mixBandMeasurements"></div>
+              <section id="mixComparison" class="mixlab-comparison" hidden>
+                <h3>What to listen for</h3>
+                <ul id="mixComparisonNotes"></ul>
+              </section>
+            </div>
+          </div>
+        </details>
         <!-- This hover-only line joins a card directly to its region in the spectrogram. -->
         <svg id="hoverConnectorOverlay" class="hover-connector-overlay" aria-hidden="true">
           <path id="hoverConnectorPath"></path>
@@ -368,7 +422,7 @@
     <dialog id="legalDialog" class="legal-dialog" aria-labelledby="legalDialogTitle">
       <div class="legal-dialog__head">
         <div>
-            <p class="legal-dialog__eyebrow">music analyser · version <span data-app-version>0.2.3</span></p>
+            <p class="legal-dialog__eyebrow">music analyser · version <span data-app-version>0.3.0</span></p>
           <h2 id="legalDialogTitle">Legal information</h2>
         </div>
         <button id="legalDialogClose" class="quiet-action" type="button" aria-label="Close legal information">close</button>
@@ -433,12 +487,18 @@
     <!-- Loudness maths loads first so app.js can use its tested measurements. -->
     <script src="loudness.js?v=20260712-2"></script>
     <!-- These local analysis helpers estimate the musical grid and draw a detailed spectrogram. -->
-    <script src="tempo.js?v=20260720-1"></script>
+    <script src="tempo.js?v=030"></script>
     <script src="spectrogram.js?v=20260717-1"></script>
     <!-- The metronome helper keeps beat timing testable outside the interface. -->
     <script src="metronome.js?v=20260717-2"></script>
     <!-- One shared source keeps the in-app legal dialog and Markdown documents aligned. -->
-    <script src="legal-content.js?v=20260720-1"></script>
-    <script src="app.js?v=20260720-1"></script>
+    <script src="legal-content.js?v=030"></script>
+    <script src="session.js"></script>
+    <script src="storage.js"></script>
+    <script src="analysis-client.js?v=030"></script>
+    <script src="audio-decode.js?v=030"></script>
+    <script src="mix-analysis.js?v=030"></script>
+    <script src="mix-lab.js?v=030"></script>
+    <script src="app.js?v=030"></script>
   </body>
 </html>

@@ -49,10 +49,17 @@ There is no frontend framework, backend, account system, or upload service.
 - `app.js` — application behaviour, organised into labelled sections with beginner-friendly comments.
 - `loudness.js` — the separately testable ITU-R BS.1770-5 integrated-LUFS, sample-peak, and RMS measurement code.
 - `tempo.js` — dependency-free onset, autocorrelation, beat-phase, straight-grid, and likely-downbeat estimation for constant-tempo recordings. It exposes separate tempo, beat-phase, and downbeat confidence values.
-- `spectrogram.js` — separately testable 2048-point FFT spectrogram analysis with display-aware detail and practical 4096 × 1024 source limits.
+- `audio-decode.js` — decoder independent of the current audio output. It preserves supported WAV, AIFF and FLAC source rates and uses 48 kHz for other inputs.
+- `analysis-client.js`, `analysis-worker.js` and `analysis-core.js` — cancellable recording, spectrum, tempo and MixLab jobs. Decoded samples move to per-job workers as transferable buffers. The renderer retains transport, selection and project state.
+- `mix-analysis.js` and `mix-lab.js` — DSP and controller for the optional MixLab workspace. The reference snapshot is validated before storage or display.
+- `spectrogram.js` — separately testable 2,048–8,192-point FFT spectrogram analysis with display-aware detail and practical 4096 × 1024 source limits.
 - `metronome.js` — pure beat-window and media-time-to-audio-clock calculations used by the transport's short look-ahead scheduler.
 - `tests/loudness.test.cjs` — generated-audio checks based on the official EBU Tech 3341 minimum-requirements signals.
 - `tests/tempo.test.cjs`, `tests/spectrogram.test.cjs`, and `tests/metronome.test.cjs` — generated click-track, silence, sizing, sine-frequency, downbeat, window-boundary, seek, and playback-rate checks; no copyrighted test recordings are stored.
+- `session.js` — shared validation of session, local-save and history data, including bounded regions, category/ID repair and safe HTTPS links.
+- `storage.js` — resilient local storage with in-memory continuation and a visible warning when saving fails.
+- `metadata.cjs` — bounded, separately tested ID3/MP4 tag parsing.
+- `scripts/test-renderer.cjs` and `tests/renderer-checks.js` — disposable-profile Electron integration and layout checks.
 - `main.cjs` — the small Electron desktop shell that opens `index.html` in a native window and reads MP3/M4A metadata when available.
 - `preload.cjs` — the narrow bridge between the isolated page and Electron's native file helpers.
 - `legal-content.js` — the single source for the in-app Privacy Policy and Terms of Use; `npm run sync:legal` recreates the Markdown versions from it.
@@ -83,6 +90,7 @@ To run the generated-audio loudness, tempo, spectrogram, and metronome-timing ch
 
 ```bash
 npm test
+npm run test:integration
 ```
 
 The interface can still be opened directly through `index.html` for quick browser checks. Running a small local server is more reliable for browser permissions:
@@ -98,7 +106,7 @@ For development testing, `http://127.0.0.1:4173/?demo=1` generates a short synth
 ## Main user flow
 
 1. The starting screen is the empty recording workspace. The user drops an audio file onto it or clicks `drop audio file here` to choose one supported by the app's audio decoder.
-2. The app decodes the recording locally and calculates a waveform, display-aware 2048-FFT logarithmic spectrogram, sample peak, whole-track channel-average RMS, ITU-R BS.1770-5 integrated LUFS, and an estimated constant-tempo rhythm grid. The scan estimates BPM, quarter-note phase, and a likely first downbeat; its separate confidence values keep uncertainty visible.
+2. The app decodes the recording locally and calculates a waveform, display-aware logarithmic spectrogram, sample peak, whole-track channel-average RMS, ITU-R BS.1770-5 integrated LUFS, and an estimated constant-tempo rhythm grid. The scan estimates BPM, quarter-note phase, and a likely first downbeat; its separate confidence values keep uncertainty visible.
    The `tempo & beat grid` panel provides decimal BPM entry, half/double tempo, 3–7 beats per bar, reanalysis/reset, `set bar 1 · beat 1 at playhead`, 10 ms nudges, one-beat downbeat shifts, whole-bar numbering shifts, and a remembered bar-marker opacity slider. Grid corrections are saved and undoable, while annotations remain stored in exact seconds.
 3. The artist name, track title, and album artwork are read from common MP3 ID3 and M4A/MP4 metadata when present, then shown as editable fields with the artist above the track title.
 4. Playback controls allow play/pause, seeking, volume changes, optional selection looping, and an optional metronome. The metronome follows the detected or manually corrected BPM, Bar 1 position, and beats-per-bar value; a 1,760 Hz ping marks Beat 1 while the other beats use a shorter 880 Hz click. Slider drags, waveform clicks, loops, and annotation jumps cancel the old queued clicks immediately; the scheduler waits for audio to advance at the new location before attaching a fresh track-to-audio-clock anchor. Grid edits and pitch-locked speed changes also resynchronise it. A narrow, continuous stereo meter shows the live signal level.
@@ -114,9 +122,9 @@ For development testing, `http://127.0.0.1:4173/?demo=1` generates a short synth
 
 ## Data and privacy
 
-Audio is held in app memory and played from a temporary local object URL. It is never uploaded by the app. The project saves only metadata, note data, category names, arrangement sections, rhythm-grid settings, recent-analysis pointers, interface and playback preferences such as the metronome setting, and an optional sender-provided HTTPS audio-download link in `localStorage`.
+Audio is held in app memory and played from a temporary local object URL. It is never uploaded by the app. The project saves only metadata, note data, category names, arrangement sections, rhythm-grid settings, recent-analysis pointers, optional MixLab reference measurements, interface and playback preferences such as the metronome setting, and an optional sender-provided HTTPS audio-download link in `localStorage`.
 
-The interface loads IBM Plex Mono from Google Fonts when a network connection is available, so Google may receive normal connection information. This is the only app-started network request shown in the current source. The optional system sharing action sends an exported JSON session only to the destination the user chooses. A recipient can manually open the sender-provided audio link, but the app does not fetch it automatically. The app otherwise has no accounts, analytics, advertising, cloud sync, backend, or audio upload service. Full, evidence-based wording lives in `PRIVACY.md` and `TERMS.md` and is available through the side rail's `about & legal` panel.
+The interface uses system fonts. Optional sharing uses the chosen system destination, and an optional HTTPS recording link opens in the browser. Native JSON exports stage the write in the selected folder and replace the destination only after the data has been written. Data handling is described in `PRIVACY.md` and `TERMS.md`.
 
 Saved notes are matched to a recording using its file path when available, plus byte size and last-modified time. The recent analyses rail stores compact artwork/artist/title entries with annotation counts that reopen the original local file and its notes when the file is still in place. Each recent card also has its own small remove control, which forgets only that shortcut and its saved recent-list entry. A track is added as soon as it loads, even with zero notes, and artwork is reduced to a small thumbnail for this list. Clearing app storage removes these saved notes.
 
@@ -126,15 +134,15 @@ Version 3 JSON sessions give the user an explicit backup and transfer route for 
 
 The current repository does not contain a separate design-system document. The implementation details below are inferred from `index.html` and `styles.css`.
 
-- The interface keeps the supplied design specification's square geometry, fine rules, and single IBM Plex Mono typeface, while using a restrained Codex-like blue for the song title, primary annotation action, selection boxes, and active controls.
+- The interface adapts Album Builder’s system typography, indigo accents, rounded panels, quiet borders, light and dark themes, and library rail.
 - The simplified app icon uses a transparent outside edge, dark rounded frame, enlarged white waveform, translucent blue selected region, and vertical analysis line so it remains legible at Dock size.
 - A quiet `how to use` drawer and a collapsible `recent analyses` list sit in a dedicated rail fixed 16px from the left side of wide windows. Below 1280px it returns to normal document flow and stacks above the workspace.
 - A soft `(c) Pat Carroll` credit appears at the bottom of the tool and is hidden during focused view.
 - The desktop workspace now uses almost the full window width, capped at 1900px, with only 16px side gutters on screens below that cap.
-- The starting screen is deliberately not a promotional introduction: it is a blank waveform/spectrogram workspace with one `drop audio file here` action.
+- The starting screen gives a single drop target and a file chooser. The Session menu holds load, save and share. MixLab is collapsed on launch and has a library rail shortcut.
 - The omitted floating braille characters and plus/minus background animations are not included.
 - The spectrogram maps amplitude through a fixed midnight-blue, cobalt, cyan, mint, warm-gold, and cream palette. Dark blue represents quiet energy and warm light colours represent the strongest energy.
-- Spectrogram analysis prepares enough physical source pixels for focused Retina view, uses a 2048-sample Hann FFT, caches the coloured raster, and rebuilds only when a substantially larger viewport needs more detail.
+- Spectrogram analysis prepares enough physical source pixels for focused Retina view, uses a Hann-windowed FFT scaled from 2,048 to 8,192 samples, caches the coloured raster, and rebuilds only when a substantially larger viewport needs more detail.
 - Frequency is shown on a logarithmic vertical scale so low and mid frequencies receive enough visual space for musical analysis.
 - A bar/beat ruler sits above the waveform. The annotation timeline repeats labelled bar positions below, while the transport continues to show exact elapsed seconds.
 - Pointer-transparent beat lines cross both waveform and spectrogram; bar lines are stronger and Bar 1 is strongest. The listener can reduce only the bar-marker opacity from the tempo panel, leaving beat lines visible. Pre-roll before Bar 1 uses negative bar numbers and skips Bar 0.
@@ -164,7 +172,7 @@ The current repository does not contain a separate design-system document. The i
 - Change categories, note fields, filtering, or export format in the `Annotation creation, persistence, and export` section of `app.js`.
 - Change tempo/beat detection in `tempo.js`, then add or update generated click-track cases in `tests/tempo.test.cjs`.
 - Change metronome grid-to-clock maths in `metronome.js` and its sound/scheduler integration in the `METRONOME PLAYBACK` section of `app.js`, then update `tests/metronome.test.cjs`.
-- Change spectrogram FFT/detail selection in `spectrogram.js`; change palette/raster display in the `Drawing the waveform, high-detail spectrogram, and musical grid` section of `app.js`.
+- Change spectrogram FFT/detail selection in `spectrogram.js`; change palette and cached waveform envelopes in `analysis-core.js`.
 - Change imported-track loudness measurements in `loudness.js`, then add or update a corresponding case in `tests/loudness.test.cjs`.
 - Change legal wording in `legal-content.js`, then run `npm run sync:legal`; do not edit only one of the generated Markdown documents.
 
@@ -175,7 +183,7 @@ The current repository does not contain a separate design-system document. The i
 - Tempo analysis assumes one straight grid. Live performances, rubato, deliberate tempo changes, or heavy syncopation can drift away from it and would need a future variable-tempo beat map.
 - Half/double-tempo choice and downbeat placement are musically ambiguous in some recordings. Confidence is shown separately, and the manual correction controls are part of the intended workflow rather than an exceptional fallback.
 - Audio does not contain a semantic label saying which downbeat should be called Bar 1. The automatic scan chooses an early rhythmically meaningful downbeat, but pickups, ambient intros, and phrase conventions may require `set bar 1 at playhead` or whole-bar shifts.
-- The spectrogram currently analyses the first audio channel. Its fixed 2048-point window balances transient and frequency detail; future versions could offer channel choice and adjustable time/frequency resolution.
+- The spectrogram currently analyses the first audio channel. Its window length scales with higher sample rates to retain bass resolution; future versions could offer channel choice and adjustable time/frequency resolution.
 - The peak display is a sample peak, not a true peak. A future true-peak display would need standards-compliant oversampling and should use dBTP rather than dBFS.
 - The Web Audio decoder may convert a recording to the computer's current audio-analysis sample rate. The LUFS filter adapts to that rate, but the displayed `sample rate` describes the decoded analysis buffer rather than necessarily reporting the file header's original rate.
 - Mono, stereo, common four-/five-channel layouts, and common 5.1 order are handled explicitly for LUFS. Unusual advanced speaker layouts do not provide position metadata through `AudioBuffer`, so their channels use a neutral fallback weight.
@@ -183,3 +191,11 @@ The current repository does not contain a separate design-system document. The i
 - Pitch-locked speed uses Chromium's built-in real-time stretcher. It is reliable for the modest 50–125% analysis range but is not a replacement for a dedicated offline spectral engine such as Ableton Complex Pro or Signalsmith Stretch.
 - Annotation boxes can be shown together on the spectrogram, while the working, selected, or hovered annotation remains visually stronger.
 - A future hosted collaboration layer could add shared playback, comments, permissions, and live editing without changing the local-first core.
+
+## Local Wash — 17–18 November 2026
+
+Version 0.2.4 adds validated and undoable session restoration, portable path-free exports, atomic recording loads, resilient autosaving, proper full-mix filter bypass, manual-seek cancellation of region auditions, keyboard fixes, readable default timing markers, bounded native metadata/navigation, and responsive annotation cards. Electron is 43.8.10 and electron-builder 26.18.1. Six moderate build-chain audit findings remain; no high-severity findings remain. Native Load Session also preserves the menu gesture required by Chromium’s file chooser. Final validation passed 47 unit checks, 22 integration/layout checks, installed-app launch and native JSON save/load round-trips. Changes are local until separately published.
+
+## 0.3.0 verification
+
+The Apple Silicon macOS bundle uses sandboxed Electron with a narrow preload, local resources, and no network dependency for analysis. Version 3 session import accepts optional MixLab data from the spin-off. Source, reports and portable sessions exclude recording files. A MixLab reference restored from disk requires the reference audio to audition. Calibration and comparison checks are descriptive, and cubic true peak remains an estimate.

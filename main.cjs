@@ -1,6 +1,23 @@
-const { app, BrowserWindow, ipcMain, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } = require("electron");
 const fs = require("fs/promises");
+const { randomUUID } = require("node:crypto");
 const path = require("path");
+const { pathToFileURL } = require("url");
+const { readId3Metadata, readMp4Metadata } = require("./metadata.cjs");
+const appUrl = pathToFileURL(path.join(__dirname, "index.html")).href;
+const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
+const AUDIO_EXTENSIONS = new Set([".wav", ".wave", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".m4a", ".mp4", ".alac", ".aac", ".ogg", ".oga", ".opus", ".weba", ".webm", ".mp2", ".mpga", ".m4b", ".caf", ".amr", ".ac3", ".mka", ".mkv", ".wma", ".au"]);
+
+function openWebLink(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && !parsed.username && !parsed.password) void shell.openExternal(parsed.href).catch(() => {});
+  } catch { /* Untrusted or unsupported links remain closed. */ }
+}
+
+function trustedSender(event) {
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url.split("#")[0] !== appUrl) throw new Error("Untrusted file request");
+}
 
 // This file is the small desktop-app shell around the existing HTML prototype.
 // Electron provides the native window; index.html still owns the actual tool UI.
@@ -22,6 +39,9 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Metronome scheduling and pending recording jobs must keep moving
+      // while a file sheet or another application covers the workspace.
+      backgroundThrottling: false,
     },
   });
 
@@ -29,6 +49,16 @@ function createMainWindow() {
     app.dock.setIcon(appIcon);
   }
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openWebLink(url);
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.split("#")[0] !== appUrl) { event.preventDefault(); openWebLink(url); }
+  });
+  mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, respond) => respond(false));
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   mainWindow.loadFile(path.join(__dirname, "index.html"));
   mainWindow.once("ready-to-show", () => mainWindow.show());
 }
@@ -43,14 +73,22 @@ app.whenReady().then(() => {
   });
 });
 
-// Session commands belong in the normal macOS File menu. The menu sends a
-// simple action name to the focused window; app.js still owns the actual file
-// pickers and session data so there is only one implementation to understand.
+// The native menu must carry its user gesture into the file input. An IPC
+// message alone loses that activation and Chromium silently blocks the picker.
+function sendSessionMenuAction(action) {
+  const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const contents = targetWindow?.webContents;
+  if (!contents || contents.getURL().split("#")[0] !== appUrl) return;
+  if (action === "load-session") {
+    void contents.executeJavaScript('document.getElementById("loadSessionButton").click()', true)
+      .catch(() => console.warn("Session file chooser could not be opened"));
+  } else if (action === "save-session") {
+    contents.send("menu:action", action);
+  }
+}
+
+// app.js owns session validation and export for both native and browser use.
 function installApplicationMenu() {
-  const sendAction = (action) => {
-    const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    targetWindow?.webContents.send("menu:action", action);
-  };
 
   const template = [
     ...(process.platform === "darwin" ? [{
@@ -70,8 +108,8 @@ function installApplicationMenu() {
     {
       label: "File",
       submenu: [
-        { label: "Load Session…", accelerator: "CmdOrCtrl+O", click: () => sendAction("load-session") },
-        { label: "Save Session…", accelerator: "CmdOrCtrl+S", click: () => sendAction("save-session") },
+        { label: "Load Session…", accelerator: "CmdOrCtrl+O", click: () => sendSessionMenuAction("load-session") },
+        { label: "Save Session…", accelerator: "CmdOrCtrl+S", click: () => sendSessionMenuAction("save-session") },
         { type: "separator" },
         { role: process.platform === "darwin" ? "close" : "quit" },
       ],
@@ -102,39 +140,78 @@ app.on("window-all-closed", () => {
 
 // These handlers are deliberately narrow: the page can ask for metadata or for
 // a recent audio file it already knows about, but it cannot browse the whole Mac.
-ipcMain.handle("audio:metadata", async (_event, filePath) => readAudioMetadata(filePath));
-ipcMain.handle("audio:load-file", async (_event, filePath) => readRecentAudioFile(filePath));
+ipcMain.handle("audio:metadata", async (event, filePath) => { trustedSender(event); return readAudioMetadata(filePath); });
+ipcMain.handle("audio:load-file", async (event, filePath) => { trustedSender(event); return readRecentAudioFile(filePath); });
+ipcMain.handle("session:save-json", async (event, name, json) => {
+  trustedSender(event);
+  return saveJsonFile(BrowserWindow.fromWebContents(event.sender), name, json);
+});
+
+async function saveJsonFile(window, name, json) {
+  if (typeof name !== "string" || !/^[a-z0-9_-]{1,150}\.json$/i.test(name)) throw new Error("Invalid export name");
+  if (typeof json !== "string" || Buffer.byteLength(json) > 16 * 1024 * 1024) throw new Error("Export exceeds the session size limit");
+  const { canceled, filePath } = await dialog.showSaveDialog(window, {
+    title: "Save Music Analyser JSON",
+    defaultPath: name,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (canceled || !filePath) return false;
+  const temporary = path.join(path.dirname(filePath), `.music-analyser-${randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporary, json, { encoding: "utf8", flag: "wx", mode: 0o600, flush: true });
+    await fs.rename(temporary, filePath);
+    return true;
+  } finally {
+    await fs.unlink(temporary).catch(() => {});
+  }
+}
 
 async function readRecentAudioFile(filePath) {
   const safePath = normaliseReadablePath(filePath);
-  const [data, stats] = await Promise.all([fs.readFile(safePath), fs.stat(safePath)]);
+  if (!AUDIO_EXTENSIONS.has(path.extname(safePath).toLowerCase())) throw new Error("Unsupported recording file type");
+  const stats = await fs.stat(safePath);
+  if (!stats.isFile()) throw new Error("Recording is not a regular file");
+  if (stats.size > MAX_RECORDING_BYTES) throw new Error("Recording is larger than 512 MB");
+  const data = await fs.readFile(safePath);
   return {
     path: safePath,
     name: path.basename(safePath),
     size: stats.size,
-    lastModified: Math.round(stats.mtimeMs),
+    // Chromium File.lastModified truncates fractional milliseconds. Match the picker’s storage key.
+    lastModified: Math.trunc(stats.mtimeMs),
     type: mimeTypeForPath(safePath),
     data,
-    metadata: await readAudioMetadata(safePath),
+    metadata: { ...metadataFromAudioBytes(safePath, data), roundedLastModified: Math.round(stats.mtimeMs) },
   };
 }
 
 async function readAudioMetadata(filePath) {
   try {
     const safePath = normaliseReadablePath(filePath);
-    const data = await fs.readFile(safePath);
     const extension = path.extname(safePath).toLowerCase();
-    if (extension === ".mp3" || data.slice(0, 3).toString("latin1") === "ID3") return readId3Metadata(data);
-    if (extension === ".m4a" || extension === ".mp4" || extension === ".aac" || extension === ".alac") return readMp4Metadata(data);
-    return {};
+    if (!AUDIO_EXTENSIONS.has(extension)) return {};
+    const stats = await fs.stat(safePath);
+    if (!stats.isFile()) return {};
+    const identity = { roundedLastModified: Math.round(stats.mtimeMs) };
+    // The timestamp identifies older autosaves even for formats without supported tags.
+    if (stats.size > 256 * 1024 * 1024 || ![".mp3", ".m4a", ".mp4", ".aac", ".alac"].includes(extension)) return identity;
+    return { ...metadataFromAudioBytes(safePath, await fs.readFile(safePath)), ...identity };
   } catch (error) {
-    console.warn("Audio metadata could not be read:", error.message);
+    console.warn("Audio metadata could not be read:", error.code || error.name);
     return {};
   }
 }
 
+function metadataFromAudioBytes(filePath, data) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (data.length > 256 * 1024 * 1024) return {};
+  if (extension === ".mp3") return readId3Metadata(data);
+  if (![".m4a", ".mp4", ".aac", ".alac"].includes(extension)) return {};
+  return data.subarray(0, 3).toString("latin1") === "ID3" ? readId3Metadata(data) : readMp4Metadata(data);
+}
+
 function normaliseReadablePath(filePath) {
-  if (!filePath || typeof filePath !== "string") throw new Error("Missing file path");
+  if (typeof filePath !== "string" || !path.isAbsolute(filePath) || filePath.includes("\0")) throw new Error("Invalid recording path");
   return path.resolve(filePath);
 }
 
@@ -146,145 +223,4 @@ function mimeTypeForPath(filePath) {
   if (extension === ".aiff" || extension === ".aif") return "audio/aiff";
   if (extension === ".flac") return "audio/flac";
   return "audio/*";
-}
-
-function readId3Metadata(data) {
-  if (data.slice(0, 3).toString("latin1") !== "ID3") return {};
-  const version = data[3];
-  const tagSize = readSyncSafeInteger(data, 6);
-  const end = Math.min(data.length, 10 + tagSize);
-  const metadata = {};
-  let offset = 10;
-
-  while (offset + 10 <= end) {
-    const frameId = data.slice(offset, offset + 4).toString("latin1").replace(/\0/g, "");
-    if (!frameId) break;
-    const frameSize = version === 4 ? readSyncSafeInteger(data, offset + 4) : data.readUInt32BE(offset + 4);
-    const frameStart = offset + 10;
-    const frameEnd = Math.min(end, frameStart + frameSize);
-    const frame = data.slice(frameStart, frameEnd);
-
-    if (frameId === "TIT2") metadata.title = decodeId3TextFrame(frame);
-    if (frameId === "TPE1") metadata.artist = decodeId3TextFrame(frame);
-    if (frameId === "TPE2") metadata.albumArtist = decodeId3TextFrame(frame);
-    if (frameId === "TALB") metadata.album = decodeId3TextFrame(frame);
-    if (frameId === "APIC" && !metadata.artwork) metadata.artwork = decodeId3Artwork(frame);
-
-    offset = frameEnd;
-  }
-
-  return cleanMetadata(metadata);
-}
-
-function readMp4Metadata(data) {
-  const metadata = {};
-  walkMp4Atoms(data, 0, data.length, (atom, payloadStart, payloadEnd) => {
-    if (atom === "\u00a9nam") metadata.title = readMp4DataText(data, payloadStart, payloadEnd);
-    if (atom === "\u00a9ART") metadata.artist = readMp4DataText(data, payloadStart, payloadEnd);
-    if (atom === "aART") metadata.albumArtist = readMp4DataText(data, payloadStart, payloadEnd);
-    if (atom === "\u00a9alb") metadata.album = readMp4DataText(data, payloadStart, payloadEnd);
-    if (atom === "covr" && !metadata.artwork) metadata.artwork = readMp4Artwork(data, payloadStart, payloadEnd);
-  });
-  return cleanMetadata(metadata);
-}
-
-function walkMp4Atoms(data, start, end, visit) {
-  const containerAtoms = new Set(["moov", "udta", "ilst", "trak", "mdia", "minf", "stbl"]);
-  let offset = start;
-
-  while (offset + 8 <= end) {
-    let size = data.readUInt32BE(offset);
-    const atom = data.slice(offset + 4, offset + 8).toString("latin1");
-    let headerSize = 8;
-    if (size === 1 && offset + 16 <= end) {
-      size = Number(data.readBigUInt64BE(offset + 8));
-      headerSize = 16;
-    }
-    if (size < headerSize || offset + size > end) break;
-
-    let payloadStart = offset + headerSize;
-    const payloadEnd = offset + size;
-    visit(atom, payloadStart, payloadEnd);
-
-    if (atom === "meta") payloadStart += 4; // version and flags sit before child atoms.
-    if (containerAtoms.has(atom) || atom === "meta") walkMp4Atoms(data, payloadStart, payloadEnd, visit);
-    offset += size;
-  }
-}
-
-function readMp4DataText(data, start, end) {
-  const payload = findMp4DataPayload(data, start, end);
-  return payload ? data.slice(payload.start, payload.end).toString("utf8").replace(/\0/g, "").trim() : "";
-}
-
-function readMp4Artwork(data, start, end) {
-  const payload = findMp4DataPayload(data, start, end);
-  if (!payload) return "";
-  const mime = payload.type === 14 ? "image/png" : "image/jpeg";
-  return `data:${mime};base64,${data.slice(payload.start, payload.end).toString("base64")}`;
-}
-
-function findMp4DataPayload(data, start, end) {
-  let offset = start;
-  while (offset + 16 <= end) {
-    const size = data.readUInt32BE(offset);
-    const atom = data.slice(offset + 4, offset + 8).toString("latin1");
-    if (size < 16 || offset + size > end) break;
-    if (atom === "data") {
-      return {
-        type: data.readUInt32BE(offset + 8) & 0xff,
-        start: offset + 16,
-        end: offset + size,
-      };
-    }
-    offset += size;
-  }
-  return null;
-}
-
-function readSyncSafeInteger(data, offset) {
-  return ((data[offset] & 0x7f) << 21) | ((data[offset + 1] & 0x7f) << 14) | ((data[offset + 2] & 0x7f) << 7) | (data[offset + 3] & 0x7f);
-}
-
-function decodeId3TextFrame(frame) {
-  if (!frame.length) return "";
-  return decodeId3Text(frame.slice(1), frame[0]);
-}
-
-function decodeId3Text(bytes, encoding) {
-  if (encoding === 1 || encoding === 2) {
-    const littleEndian = encoding === 1 ? !(bytes[0] === 0xfe && bytes[1] === 0xff) : false;
-    const start = encoding === 1 && (bytes[0] === 0xff || bytes[0] === 0xfe) ? 2 : 0;
-    const swapped = Buffer.alloc(Math.max(0, bytes.length - start));
-    for (let index = start; index + 1 < bytes.length; index += 2) {
-      const target = index - start;
-      swapped[target] = littleEndian ? bytes[index] : bytes[index + 1];
-      swapped[target + 1] = littleEndian ? bytes[index + 1] : bytes[index];
-    }
-    return swapped.toString("utf16le").replace(/\0/g, "").trim();
-  }
-  return bytes.toString(encoding === 3 ? "utf8" : "latin1").replace(/\0/g, "").trim();
-}
-
-function decodeId3Artwork(frame) {
-  if (!frame.length) return "";
-  const encoding = frame[0];
-  let offset = 1;
-  const mimeEnd = frame.indexOf(0, offset);
-  if (mimeEnd === -1) return "";
-  const mime = frame.slice(offset, mimeEnd).toString("latin1") || "image/jpeg";
-  offset = mimeEnd + 2; // skip MIME terminator and picture type byte.
-  const terminatorLength = encoding === 0 || encoding === 3 ? 1 : 2;
-  while (offset + terminatorLength < frame.length) {
-    const ended = terminatorLength === 1
-      ? frame[offset] === 0
-      : frame[offset] === 0 && frame[offset + 1] === 0;
-    offset += terminatorLength;
-    if (ended) break;
-  }
-  return `data:${mime};base64,${frame.slice(offset).toString("base64")}`;
-}
-
-function cleanMetadata(metadata) {
-  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => Boolean(value)));
 }

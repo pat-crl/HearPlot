@@ -8,6 +8,7 @@ const assert = require("node:assert/strict");
 const {
   analyseSpectrogram,
   chooseSpectrogramSettings,
+  frequencyForRow,
   rowForFrequency,
   MAX_COLUMNS,
   MAX_ROWS,
@@ -90,4 +91,14 @@ test("a 1 kHz sine appears on the expected logarithmic frequency row", () => {
     Math.abs(strongestRow - expectedRow) <= 2,
     `expected the 1 kHz ridge near row ${expectedRow.toFixed(1)}, received row ${strongestRow}`,
   );
+});
+
+test("high sample rates keep the low-frequency bins close to the source tone", () => {
+  const sampleRate = 192000;
+  const result = analyseSpectrogram(makeSineTone({ frequency: 40, sampleRate }), { columns: 5, rows: 1024 });
+  assert.equal(result.fftSize, 8192);
+  const centreColumn = result.values.subarray(result.rows * 2, result.rows * 3);
+  const strongestRow = centreColumn.indexOf(Math.max(...centreColumn));
+  const frequency = frequencyForRow(strongestRow, result.rows, result.minFrequency, result.nyquist);
+  assert.ok(Math.abs(frequency - 40) < sampleRate / result.fftSize, `Expected a ridge near 40 Hz, got ${frequency}`);
 });
