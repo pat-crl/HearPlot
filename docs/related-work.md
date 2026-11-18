@@ -28,7 +28,7 @@ For teaching, editable layers are useful for putting a learner’s observations 
 | [Raven Pro](https://www.ravensoundsoftware.com/software/raven-pro/) | Time–frequency boxes support user-defined annotation fields, measurements, filtered playback and selection-table export. [Band filtering](https://www.ravensoundsoftware.com/knowledge-base/band-filter/) | A close technical precedent for selective listening and structured annotations. The selection table serves acoustic measurement and labelling. Music Analyser’s note groups passages around a musical observation and produces text for analysis or review. |
 | [NEAL](https://github.com/gibbona1/neal) | The bioacoustic labeller combines drawn regions, custom classes, filtered playback, free-text notes and CSV data with fields such as call type and confidence. [Gibbons et al. preprint](https://arxiv.org/abs/2212.01457) | The combination of a region, category, note and audible selection has a clear precedent. Music Analyser applies it to interpretive notes about music, including one note linked to several passages and a report organised by musical category. |
 
-## The engineering problem Music Analyser addresses
+## The problem Music Analyser addresses
 
 A listener can hear a detail in a dense recording, write about it, and still leave the next person guessing which sound they meant. A timestamp helps them find the passage. The rest of the reference can get lost in the handoff, including the frequency area to attend to, the musical element under discussion and the other passages that illustrate the point. The tools above address many parts of that problem. My design question is how to keep those details together in one workflow for analysing a recording and sharing observations about it.
 
