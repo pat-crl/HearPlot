@@ -20,13 +20,15 @@ These are the questions guiding development. Version **0.3.0** brings these work
 
 *Bounty Hill's “Drastic Indifference”, from Fourth Cause, with illustrative listening tasks. The recording is not included in this repository.*
 
-## Related work
+## Related work and design problem
 
-SoundCloud is a familiar example of commenting at a point on the waveform. Notetracks and Boombox extend that idea to feedback over a time range. [SoundCloud](https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments) · [Notetracks](https://www.notetracks.com/help/how-to-leave-timestamped-comments-at-specific-points-or-ranges-on-audio-files) · [Boombox](https://help.boombox.io/en/articles/9718329-time-ranged-comments)
+When someone writes about a dense recording, marking the time gets the next listener to the right passage. They may still have to work out which sound within it the note refers to. I wanted a single workflow for finding that sound, focusing the ear on it, describing it in musical terms and passing the observation on.
 
-Sonic Visualiser supports labelled spectrogram boxes, and Audacity labels can retain a time and frequency selection. Acousmographe and EAnalysis have used graphical annotation for electroacoustic music analysis. In bioacoustics, Raven Pro attaches custom fields to a region, and NEAL combines region labels with frequency-filtered listening. [Comparison notes and sources](docs/related-work.md)
+[SoundCloud](https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments) anchors comments to points on a waveform. [Notetracks](https://www.notetracks.com/blog/how-to-comment-on-any-audio-file) provides time-range feedback and text reports, and [Boombox](https://help.boombox.io/en/articles/9718329-time-ranged-comments) supports text and voice notes over a passage. [Sonic Visualiser](https://sonicvisualiser.org/doc/reference/5.2.1/en/#boxes) stores labelled time–frequency boxes in an annotation layer. [EAnalysis](https://logiciels.pierrecouprie.fr/?page_id=402) uses custom analytical parameters and can compute filtered tracks from graphical annotations. [Audacity](https://manual.audacityteam.org/man/importing_and_exporting_labels.html), [Acousmographe](https://inagrm.com/fr/showcase/news/203), [Raven Pro](https://www.ravensoundsoftware.com/software/raven-pro/) and [NEAL](https://arxiv.org/abs/2212.01457) provide further precedents for spectral labels, listening guides and structured annotation. [Detailed comparisons and sources](docs/related-work.md)
 
-The gap I want to address is how to communicate a listening observation so someone else can hear what it refers to. In Music Analyser, one note can link several passages, carry a musical category such as timbre or form, and let the reader replay each selected region. I’m interested in whether that helps students support an interpretation with audible examples and helps collaborators find the sound a mix note refers to.
+Music Analyser puts the **observation** at the centre of the workflow. Draw a time–frequency region on the spectrogram, play or loop that band, choose a musical category, and link any other passages that illustrate your point. Copy a list grouped by category with timestamps and frequency limits for an assignment, analysis draft or email. Send the editable session when the recipient should be able to replay the same regions using their copy of the audio.
+
+The two uses are close listening for music students and anyone analysing a recording, and precise feedback on a mix or composition among artists, engineers and label A&R teams.
 
 ## Current capabilities
 
