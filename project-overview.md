@@ -2,7 +2,7 @@
 
 ## What this project is
 
-Music Analyser is a standalone desktop prototype for close listening and structured musical analysis. A user loads a recording, inspects its waveform and high-detail spectrogram, follows an automatically estimated tempo/bar grid, selects a passage, and attaches an observation to that exact time or time-and-frequency region.
+HearPlot is a standalone desktop prototype for close listening and structured musical analysis. A user loads a recording, inspects its waveform and high-detail spectrogram, follows an automatically estimated tempo/bar grid, selects a passage, and attaches an observation to that exact time or time-and-frequency region.
 
 The result is a spatial annotation timeline: compact note cards sit in lanes beneath a shared time spine, with connector lines returning to the passages they describe. The timeline can be filtered by musical category and copied as clean, categorised text. The core interface still runs as local HTML/CSS/JavaScript, but it is now wrapped by Electron so it can launch as a macOS app while keeping the recording on the user's computer.
 
@@ -84,7 +84,7 @@ To build a local unsigned macOS app bundle:
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 ```
 
-The built app appears at `dist/mac-arm64/Music Analyser.app`, with a DMG and zip beside it in `dist/`.
+The built app appears at `dist/mac-arm64/HearPlot.app`, with a DMG and zip beside it in `dist/`.
 
 To run the generated-audio loudness, tempo, spectrogram, and metronome-timing checks:
 

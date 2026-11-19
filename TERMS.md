@@ -1,19 +1,19 @@
 # Terms of Use
 
-**Music Analyser**
+**HearPlot**
 
 Effective date: 18 November 2026
 Developer: Pat Carroll
 
-These terms set out the conditions for using Music Analyser.
+These terms set out the conditions for using HearPlot.
 
 ## Acceptance
 
-By using Music Analyser, you agree to these Terms of Use. If you do not agree, do not use the app.
+By using HearPlot, you agree to these Terms of Use. If you do not agree, do not use the app.
 
 ## Licence
 
-Pat Carroll grants you a limited, personal, non-exclusive, non-transferable, revocable licence to use Music Analyser in accordance with these terms.
+Pat Carroll grants you a limited, personal, non-exclusive, non-transferable, revocable licence to use HearPlot in accordance with these terms.
 
 ## Ownership
 

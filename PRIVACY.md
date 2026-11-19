@@ -1,15 +1,15 @@
 # Privacy Policy
 
-**Music Analyser**
+**HearPlot**
 
 Effective date: 18 November 2026
 Developer: Pat Carroll
 
-This policy explains how Music Analyser handles information when you use it.
+This policy explains how HearPlot handles information when you use it.
 
 ## Information the app handles
 
-Music Analyser handles an audio file only after you choose or drop it into the app. It may read the file's common embedded music metadata, including artist, track title, album name, and artwork. The app also handles your annotations, arrangement markers, categories, rhythm-grid corrections, and track details. If you select a reference recording in MixLab, the app also handles that recording and its measurements.
+HearPlot handles an audio file only after you choose or drop it into the app. It may read the file's common embedded music metadata, including artist, track title, album name, and artwork. The app also handles your annotations, arrangement markers, categories, rhythm-grid corrections, and track details. If you select a reference recording in MixLab, the app also handles that recording and its measurements.
 
 To reopen a recent analysis in the desktop app, the app stores a local reference to the selected recording, including its path when Electron makes that available, file name, size, and last-modified time.
 
@@ -23,7 +23,7 @@ When you choose to copy analysis text, it is placed on your system clipboard. Wh
 
 ## Network use and third-party services
 
-The interface uses fonts installed on your device. Opening an optional audio link connects to its host in your browser, and sharing a file uses the destination you choose. Music Analyser does not operate an analytics, advertising, crash-reporting or cloud service.
+The interface uses fonts installed on your device. Opening an optional audio link connects to its host in your browser, and sharing a file uses the destination you choose. HearPlot does not operate an analytics, advertising, crash-reporting or cloud service.
 
 ## Permissions
 
@@ -31,11 +31,11 @@ The app accesses a recording only after you select it. The desktop version can r
 
 ## Sharing, retention, and your choices
 
-Music Analyser does not sell your recordings or annotations. Your locally stored data remains on your device until you clear the app's stored data or remove the relevant local files. Please keep your own backups of important analyses and exported sessions.
+HearPlot does not sell your recordings or annotations. Your locally stored data remains on your device until you clear the app's stored data or remove the relevant local files. Please keep your own backups of important analyses and exported sessions.
 
 ## Children's privacy
 
-Music Analyser is not designed for children to provide personal information. The app does not include accounts or a direct collection process for personal information.
+HearPlot is not designed for children to provide personal information. The app does not include accounts or a direct collection process for personal information.
 
 ## Security
 

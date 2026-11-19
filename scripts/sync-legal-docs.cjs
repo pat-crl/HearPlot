@@ -11,7 +11,7 @@ function markdownFor(documentDetails) {
   const header = [
     `# ${documentDetails.title}`,
     "",
-    "**Music Analyser**",
+    `**${legal.appName}**`,
     "",
     `Effective date: ${legal.effectiveDate}`,
     `Developer: ${legal.developer}`,

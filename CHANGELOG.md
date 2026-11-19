@@ -2,6 +2,7 @@
 
 ## 0.3.0 — 18 November 2026
 
+- Named the app HearPlot for its first signed and notarised macOS download. Existing sessions and local settings carry over.
 - Rebuilt the workspace around Album Builder’s panel layout, typography and light and dark palettes. Added a visible Session menu and keyboard entry for exact annotation ranges.
 - Moved recording and MixLab measurements, waveform envelopes and spectrogram refinement into cancellable workers. Decode at the recognised source rate or a stable 48 kHz fallback.
 - Added an optional MixLab panel for loudness, dynamics, stereo, tone and frequency-band measures. Compare a reference with independent level-matched A/B playback, and copy or export measurements.

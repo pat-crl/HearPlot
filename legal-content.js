@@ -1,5 +1,5 @@
 /*
-  MUSIC ANALYSER — SHARED LEGAL CONTENT
+  HearPlot — SHARED LEGAL CONTENT
 
   This small file is the single source for the legal wording shown inside the
   app. Run `npm run sync:legal` after changing it to recreate PRIVACY.md and
@@ -10,7 +10,7 @@
 const SUPPORT_EMAIL = "info@pcarroll.au";
 
 const musicAnalyserLegal = {
-  appName: "Music Analyser",
+  appName: "HearPlot",
   version: "0.3.0",
   developer: "Pat Carroll",
   effectiveDate: "18 November 2026",
@@ -19,12 +19,12 @@ const musicAnalyserLegal = {
   documents: {
     privacy: {
       title: "Privacy Policy",
-      summary: "This policy explains how Music Analyser handles information when you use it.",
+      summary: "This policy explains how HearPlot handles information when you use it.",
       sections: [
         {
           heading: "Information the app handles",
           paragraphs: [
-            "Music Analyser handles an audio file only after you choose or drop it into the app. It may read the file's common embedded music metadata, including artist, track title, album name, and artwork. The app also handles your annotations, arrangement markers, categories, rhythm-grid corrections, and track details. If you select a reference recording in MixLab, the app also handles that recording and its measurements.",
+            "HearPlot handles an audio file only after you choose or drop it into the app. It may read the file's common embedded music metadata, including artist, track title, album name, and artwork. The app also handles your annotations, arrangement markers, categories, rhythm-grid corrections, and track details. If you select a reference recording in MixLab, the app also handles that recording and its measurements.",
             "To reopen a recent analysis in the desktop app, the app stores a local reference to the selected recording, including its path when Electron makes that available, file name, size, and last-modified time."
           ]
         },
@@ -39,7 +39,7 @@ const musicAnalyserLegal = {
         {
           heading: "Network use and third-party services",
           paragraphs: [
-            "The interface uses fonts installed on your device. Opening an optional audio link connects to its host in your browser, and sharing a file uses the destination you choose. Music Analyser does not operate an analytics, advertising, crash-reporting or cloud service."
+            "The interface uses fonts installed on your device. Opening an optional audio link connects to its host in your browser, and sharing a file uses the destination you choose. HearPlot does not operate an analytics, advertising, crash-reporting or cloud service."
           ]
         },
         {
@@ -51,13 +51,13 @@ const musicAnalyserLegal = {
         {
           heading: "Sharing, retention, and your choices",
           paragraphs: [
-            "Music Analyser does not sell your recordings or annotations. Your locally stored data remains on your device until you clear the app's stored data or remove the relevant local files. Please keep your own backups of important analyses and exported sessions."
+            "HearPlot does not sell your recordings or annotations. Your locally stored data remains on your device until you clear the app's stored data or remove the relevant local files. Please keep your own backups of important analyses and exported sessions."
           ]
         },
         {
           heading: "Children's privacy",
           paragraphs: [
-            "Music Analyser is not designed for children to provide personal information. The app does not include accounts or a direct collection process for personal information."
+            "HearPlot is not designed for children to provide personal information. The app does not include accounts or a direct collection process for personal information."
           ]
         },
         {
@@ -76,18 +76,18 @@ const musicAnalyserLegal = {
     },
     terms: {
       title: "Terms of Use",
-      summary: "These terms set out the conditions for using Music Analyser.",
+      summary: "These terms set out the conditions for using HearPlot.",
       sections: [
         {
           heading: "Acceptance",
           paragraphs: [
-            "By using Music Analyser, you agree to these Terms of Use. If you do not agree, do not use the app."
+            "By using HearPlot, you agree to these Terms of Use. If you do not agree, do not use the app."
           ]
         },
         {
           heading: "Licence",
           paragraphs: [
-            "Pat Carroll grants you a limited, personal, non-exclusive, non-transferable, revocable licence to use Music Analyser in accordance with these terms."
+            "Pat Carroll grants you a limited, personal, non-exclusive, non-transferable, revocable licence to use HearPlot in accordance with these terms."
           ]
         },
         {

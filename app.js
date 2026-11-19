@@ -1,5 +1,5 @@
 /*
-  MUSIC ANALYSER — APPLICATION LOGIC
+  HearPlot — APPLICATION LOGIC
 
   This file is organised in sections that follow the user's journey:
   1. shared state and page references
@@ -708,7 +708,7 @@ async function exportSessionFile(mode, audioDownloadUrl = state.audioDownloadUrl
     const file = new File([blob], fileName, { type: "application/json" });
     try {
       if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ title: `${state.artistName} — ${state.trackTitle}`, text: "Editable Music Analyser session", files: [file] });
+        await navigator.share({ title: `${state.artistName} — ${state.trackTitle}`, text: "Editable HearPlot session", files: [file] });
         showToast("JSON session shared");
         return true;
       }

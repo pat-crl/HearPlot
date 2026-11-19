@@ -255,7 +255,7 @@ summary::-webkit-details-marker { display: none; }
 .legal-dialog { width: min(760px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-solid); color: var(--fg); box-shadow: 0 24px 90px #10132246; }
 .legal-dialog::backdrop { background: #10132260; backdrop-filter: blur(4px); }
 .legal-dialog__head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; gap: 18px; align-items: start; padding: 18px 20px 16px; border-bottom: 1px solid var(--border); background: var(--surface-solid); }
-.legal-dialog__eyebrow { margin: 0 0 5px; color: var(--fg-muted); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; }
+.legal-dialog__eyebrow { margin: 0 0 5px; color: var(--fg-muted); font-size: 9px; letter-spacing: 0.06em; }
 .legal-dialog__head h2 { margin: 0; font-size: 23px; line-height: 1.2; font-weight: 650; letter-spacing: -.4px; }
 .legal-dialog__content { overflow: auto; max-height: calc(min(760px, 100vh - 32px) - 79px); padding: 22px 20px 30px; font-size: 12px; line-height: 1.65; }
 .legal-dialog__content section + section { margin-top: 25px; }

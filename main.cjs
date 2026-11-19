@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } = require("electron");
+const { mkdirSync } = require("node:fs");
 const fs = require("fs/promises");
 const { randomUUID } = require("node:crypto");
 const path = require("path");
@@ -7,6 +8,12 @@ const { readId3Metadata, readMp4Metadata } = require("./metadata.cjs");
 const appUrl = pathToFileURL(path.join(__dirname, "index.html")).href;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
 const AUDIO_EXTENSIONS = new Set([".wav", ".wave", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".m4a", ".mp4", ".alac", ".aac", ".ogg", ".oga", ".opus", ".weba", ".webm", ".mp2", ".mpga", ".m4b", ".caf", ".amr", ".ac3", ".mka", ".mkv", ".wma", ".au"]);
+
+// Resolve the existing profile before setting the new display name.
+const profilePath = app.getPath("userData");
+mkdirSync(profilePath, { recursive: true });
+app.setPath("userData", profilePath);
+app.setName("HearPlot");
 
 function openWebLink(url) {
   try {
@@ -30,7 +37,7 @@ function createMainWindow() {
     height: 940,
     minWidth: 980,
     minHeight: 680,
-    title: "Music Analyser",
+    title: app.name,
     backgroundColor: "#080808",
     icon: iconPath,
     show: false,
@@ -151,7 +158,7 @@ async function saveJsonFile(window, name, json) {
   if (typeof name !== "string" || !/^[a-z0-9_-]{1,150}\.json$/i.test(name)) throw new Error("Invalid export name");
   if (typeof json !== "string" || Buffer.byteLength(json) > 16 * 1024 * 1024) throw new Error("Export exceeds the session size limit");
   const { canceled, filePath } = await dialog.showSaveDialog(window, {
-    title: "Save Music Analyser JSON",
+    title: `Save ${app.name} JSON`,
     defaultPath: name,
     filters: [{ name: "JSON", extensions: ["json"] }],
   });

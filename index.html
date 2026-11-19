@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'" />
     <meta name="description" content="A focused desktop workspace for annotating recordings by time and frequency." />
-    <title>music analyser</title>
+    <title>HearPlot</title>
     <!-- The small version query makes Chrome fetch the latest local assets after an update. -->
     <link rel="stylesheet" href="styles.css?v=030" />
   </head>
@@ -13,7 +13,7 @@
     <!-- The top bar keeps global actions available while the analysis view scrolls. -->
     <header class="topbar">
       <div class="topbar__inner">
-        <a class="wordmark" href="#workspace" aria-label="Music analyser home">Music Analyser</a>
+        <a class="wordmark" href="#workspace" aria-label="HearPlot home">HearPlot</a>
         <div class="topbar__status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
           <span id="projectStatus">no recording loaded</span>
@@ -68,7 +68,7 @@
       <details class="legal-drawer">
         <summary>about &amp; legal</summary>
         <div class="legal-drawer__body">
-          <p><strong>Music Analyser</strong> is a local desktop workspace for annotating recordings by time and frequency.</p>
+          <p><strong>HearPlot</strong> is a local desktop workspace for annotating recordings by time and frequency.</p>
           <p>Version <span data-app-version>0.3.0</span><br />© 2026 Pat Carroll. All rights reserved.</p>
           <div class="legal-drawer__actions">
             <button type="button" class="text-button legal-link" data-legal-document="privacy">privacy policy</button>
@@ -422,7 +422,7 @@
     <dialog id="legalDialog" class="legal-dialog" aria-labelledby="legalDialogTitle">
       <div class="legal-dialog__head">
         <div>
-            <p class="legal-dialog__eyebrow">music analyser · version <span data-app-version>0.3.0</span></p>
+            <p class="legal-dialog__eyebrow">HearPlot · version <span data-app-version>0.3.0</span></p>
           <h2 id="legalDialogTitle">Legal information</h2>
         </div>
         <button id="legalDialogClose" class="quiet-action" type="button" aria-label="Close legal information">close</button>

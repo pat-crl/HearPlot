@@ -7,17 +7,35 @@ const { pathToFileURL } = require("node:url");
 const root = path.resolve(__dirname, "..");
 function harness(window = null, showSaveDialog) {
   const reads = [];
+  const profile = "/existing-profile/music-analyser";
+  const startup = [];
   const disk = { stat: async () => ({ isFile: () => true, size: 12, mtimeMs: 123 }),
     readFile: async (name) => { reads.push(name); return Buffer.from("not an ID3 tag"); } };
   const context = { __dirname: root, Buffer, URL, console, module: { exports: {} }, require(name) {
-    if (name === "electron") return { app: { whenReady: () => ({ then() {} }), on() {} }, ipcMain: { handle() {} }, BrowserWindow: { getFocusedWindow: () => window, getAllWindows: () => [] }, dialog: { showSaveDialog } };
+    if (name === "electron") return {
+      app: {
+        getPath: (key) => { startup.push(["read", key]); return profile; },
+        setPath: (key, value) => startup.push(["path", key, value]),
+        setName: (name) => startup.push(["name", name]),
+        whenReady: () => ({ then() {} }),
+        on() {},
+      },
+      ipcMain: { handle() {} },
+      BrowserWindow: { getFocusedWindow: () => window, getAllWindows: () => [] },
+      dialog: { showSaveDialog },
+    };
+    if (name === "node:fs") return { mkdirSync: (directory) => startup.push(["mkdir", directory]) };
     if (name === "fs/promises") return disk;
     if (name === "./metadata.cjs") return require("../metadata.cjs");
     return require(name);
   } };
   vm.runInNewContext(fs.readFileSync(path.join(root, "main.cjs"), "utf8") + "\nmodule.exports={readAudioMetadata,readRecentAudioFile,normaliseReadablePath,trustedSender,sendSessionMenuAction,saveJsonFile};", context);
-  return { ...context.module.exports, disk, reads };
+  return { ...context.module.exports, disk, reads, profile, startup };
 }
+test("the HearPlot display name preserves the existing Electron profile", () => {
+  const { startup, profile } = harness();
+  assert.deepEqual(startup, [["read", "userData"], ["mkdir", profile], ["path", "userData", profile], ["name", "HearPlot"]]);
+});
 test("WAV metadata lookup avoids reading the entire recording again", async () => {
   const h = harness(); await h.readAudioMetadata("/recordings/study.wav"); assert.equal(h.reads.length, 0);
 });

@@ -469,7 +469,7 @@
     }
 
     function reportText() {
-      const lines = ["Music Analyser · MixLab"];
+      const lines = ["HearPlot · MixLab"];
       for (const [side, track] of [["A", primary], ["B", reference]]) {
         if (!track?.analysis) continue;
         lines.push("", `Track ${side} · ${track.name}`);
