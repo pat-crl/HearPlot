@@ -2,9 +2,9 @@
 
 **A spectrogram annotation platform for close listening, music education and precise feedback on recordings.**
 
-**[Download HearPlot for Mac (.dmg)](https://github.com/pmancaz/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg)**
+**[Download HearPlot for Mac (.dmg)](https://github.com/pat-crl/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg)**
 
-For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pmancaz/HearPlot/releases/tag/v0.3.0)
+For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pat-crl/HearPlot/releases/tag/v0.3.0)
 
 HearPlot is an ongoing project by Pat Carroll investigating how a shared visual representation of a recording can support close listening, musical analysis and the exchange of feedback. It provides a workspace in which written annotations are attached to specific moments and frequency regions within a spectrogram. Students of music and audio can use it to analyse existing recordings in depth. Artists, collaborators, engineers and record label A&R teams can use it to give clear feedback on music.
 
@@ -60,18 +60,18 @@ HearPlot puts the **observation** at the centre of the workflow. Draw a time–f
 
 ### Download and install on a Mac
 
-1. [Download the signed HearPlot DMG](https://github.com/pmancaz/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
+1. [Download the signed HearPlot DMG](https://github.com/pat-crl/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
 2. Open the downloaded file and drag **HearPlot** onto the **Applications** folder in the window.
 3. Open **HearPlot** from Applications. If macOS asks you to confirm the first launch, choose **Open**.
 
-The installer is signed with Developer ID and notarised by Apple. Release files and notes are also available on [GitHub Releases](https://github.com/pmancaz/HearPlot/releases/latest).
+The installer is signed with Developer ID and notarised by Apple. Release files and notes are also available on [GitHub Releases](https://github.com/pat-crl/HearPlot/releases/latest).
 
 ### Run from source
 
 Install [Node.js](https://nodejs.org/) 22.12 or later with npm.
 
 ```bash
-git clone https://github.com/pmancaz/HearPlot.git
+git clone https://github.com/pat-crl/HearPlot.git
 cd HearPlot
 npm ci
 npm start
