@@ -6,19 +6,23 @@
 
 For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pmancaz/HearPlot/releases/tag/v0.3.0)
 
-HearPlot is an ongoing project by Pat Carroll investigating how a shared visual representation of a recording can support musical analysis and communication. It connects written observations to specific moments and frequency regions, allowing a listener to move between what they hear, what they see and what they want to describe.
+HearPlot is an ongoing project by Pat Carroll investigating how a shared visual representation of a recording can support close listening, musical analysis and the exchange of feedback. It provides a workspace in which written annotations are attached to specific moments and frequency regions within a spectrogram. Students of music and audio can use it to analyse existing recordings in depth. Artists, collaborators, engineers and record label A&R teams can use it to give clear feedback on music.
 
 [Project discussion](https://pcarroll.au/tools/hearplot/) · [Current capabilities](#current-capabilities) · [Installation](#installation)
 
 ## Project context
 
-The starting point is a problem I have encountered in teaching: students need a practical space in which to listen closely, organise observations and relate those observations to the musical work. A timestamp can locate a passage. Selecting a frequency range helps direct attention to a particular sound within it.
+The project begins with a problem I have encountered in teaching. Students need a practical platform for engaging closely with existing music, organising their observations and developing their analyses. In my music work, I’ve also found few platforms I wanted to use for exchanging detailed written feedback with collaborators. I am developing HearPlot as a first step towards exploring how visual annotation might support both processes.
 
-This project brings listening, spectrograms and annotation into one workspace. Students can mark a passage, focus on a frequency range, replay it and write a detailed observation. An arrangement map sits alongside the notes, making it possible to consider the structure of the composition as well as individual events.
+### Close listening and analysis in education
 
-The same approach has a second application in feedback between artists, engineers, collaborators, labels and A&R teams. A note about a particular sound can be attached directly to the relevant time-and-frequency region. The recipient has a more precise reference for the discussion and can audition that region within the recording.
+In a classroom, a timestamp can locate a passage. A student may still need help directing their attention towards a particular sound, layer, register or change in texture. Students can mark a passage, focus playback on a frequency range, replay it and write a detailed observation. Musical categories help them organise what they hear, while a separate arrangement map shows the structure of the composition alongside those observations.
 
-These are the questions guiding development. Version **0.3.0** brings these workflows into a redesigned workspace and adds MixLab for more detailed listening and comparison. How students use frequency-focused playback, and whether precise references change the quality of feedback, remain questions for evaluation.
+### Precise feedback in music production
+
+Feedback often depends on vague descriptions such as “the shrill sound in the high end at four minutes thirty”. Attaching a note to a time-and-frequency region gives the recipient a specific area to audition in the context of the full recording. One observation can link to several passages when a sound or compositional idea recurs.
+
+Version **0.3.0** brings these workflows into a redesigned workspace and adds MixLab for more detailed listening and comparison. How students use frequency-focused playback, and whether precise references change the quality of feedback, remain questions for evaluation.
 
 ![HearPlot showing a waveform, spectrogram, arrangement section and two example annotations.](docs/images/hearplot-overview.jpg)
 
@@ -31,8 +35,6 @@ When someone writes about a dense recording, marking the time gets the next list
 [SoundCloud](https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments) anchors comments to points on a waveform. [Notetracks](https://www.notetracks.com/blog/how-to-comment-on-any-audio-file) provides time-range feedback and text reports, and [Boombox](https://help.boombox.io/en/articles/9718329-time-ranged-comments) supports text and voice notes over a passage. [Sonic Visualiser](https://sonicvisualiser.org/doc/reference/5.2.1/en/#boxes) stores labelled time–frequency boxes in an annotation layer. [EAnalysis](https://logiciels.pierrecouprie.fr/?page_id=402) uses custom analytical parameters and can compute filtered tracks from graphical annotations. [Audacity](https://manual.audacityteam.org/man/importing_and_exporting_labels.html), [Acousmographe](https://inagrm.com/fr/showcase/news/203), [Raven Pro](https://www.ravensoundsoftware.com/software/raven-pro/) and [NEAL](https://arxiv.org/abs/2212.01457) provide further precedents for spectral labels, listening guides and structured annotation. [Detailed comparisons and sources](docs/related-work.md)
 
 HearPlot puts the **observation** at the centre of the workflow. Draw a time–frequency region on the spectrogram, play or loop that band, choose a musical category, and link any other passages that illustrate your point. Copy a list grouped by category with timestamps and frequency limits for an assignment, analysis draft or email. Send the editable session when the recipient should be able to replay the same regions using their copy of the audio.
-
-The two uses are close listening for music students and anyone analysing a recording, and precise feedback on a mix or composition among artists, engineers and label A&R teams.
 
 ## Current capabilities
 
@@ -95,7 +97,7 @@ On Apple Silicon, the app is written to `dist/mac-arm64/HearPlot.app`. Unsigned 
 6. Open MixLab for detailed measurements or choose a reference to compare. Live reference playback requires the audio file. Saved sessions retain reference measurements.
 7. Save an editable JSON session, or copy the analysis as text. Keep the recording and session backed up separately.
 
-For exchange, send the JSON and arrange access to the same recording. The JSON does not contain audio. An optional download link helps the recipient obtain it; they still select the downloaded file themselves. The current workflow has no live co-editing, threaded discussion, shared accounts or automatic cloud sync.
+For exchange, send the JSON and arrange access to the same recording. The JSON does not contain audio. An optional download link helps the recipient obtain it; they still select the downloaded file themselves. The current workflow has no live co-editing, threaded discussion, shared accounts or automatic cloud sync. I’d like to make that handover easier.
 
 ## Data and limitations
 
