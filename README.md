@@ -2,13 +2,13 @@
 
 **A spectrogram annotation platform for close listening, music education and precise feedback on recordings.**
 
-**[Download HearPlot for Mac (.dmg)](https://github.com/pmancaz/music-analyser/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg)**
+**[Download HearPlot for Mac (.dmg)](https://github.com/pmancaz/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg)**
 
-For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pmancaz/music-analyser/releases/tag/v0.3.0)
+For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pmancaz/HearPlot/releases/tag/v0.3.0)
 
 HearPlot is an ongoing project by Pat Carroll investigating how a shared visual representation of a recording can support musical analysis and communication. It connects written observations to specific moments and frequency regions, allowing a listener to move between what they hear, what they see and what they want to describe.
 
-[Project discussion](https://pcarroll.au/tools/music-analyser/) · [Current capabilities](#current-capabilities) · [Installation](#installation)
+[Project discussion](https://pcarroll.au/tools/hearplot/) · [Current capabilities](#current-capabilities) · [Installation](#installation)
 
 ## Project context
 
@@ -58,19 +58,19 @@ The two uses are close listening for music students and anyone analysing a recor
 
 ### Download and install on a Mac
 
-1. [Download the signed HearPlot DMG](https://github.com/pmancaz/music-analyser/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
+1. [Download the signed HearPlot DMG](https://github.com/pmancaz/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
 2. Open the downloaded file and drag **HearPlot** onto the **Applications** folder in the window.
 3. Open **HearPlot** from Applications. If macOS asks you to confirm the first launch, choose **Open**.
 
-The installer is signed with Developer ID and notarised by Apple. Release files and notes are also available on [GitHub Releases](https://github.com/pmancaz/music-analyser/releases/latest).
+The installer is signed with Developer ID and notarised by Apple. Release files and notes are also available on [GitHub Releases](https://github.com/pmancaz/HearPlot/releases/latest).
 
 ### Run from source
 
 Install [Node.js](https://nodejs.org/) 22.12 or later with npm.
 
 ```bash
-git clone https://github.com/pmancaz/music-analyser.git
-cd music-analyser
+git clone https://github.com/pmancaz/HearPlot.git
+cd HearPlot
 npm ci
 npm start
 ```
