@@ -53,7 +53,8 @@
             <li>Drag across the waveform to select a time range.</li>
             <li>Drag a box on the spectrogram to select time and frequency together. You can also enter the exact range in the annotation panel.</li>
             <li>Choose a category, write what you hear, then add the annotation.</li>
-            <li>Use the play or loop symbols on a saved region to hear that exact area; spectrogram regions are frequency-isolated.</li>
+            <li>Press <strong>Space</strong> in the recording view to play or pause. Select a note and choose <strong>Play</strong> to hear its saved passage. Spectrogram notes play their saved frequency band.</li>
+            <li>Use the play and loop controls on individual saved regions. Turn on <strong>Show annotations</strong> to see their spans on the main waveform, and use <strong>Waveform categories</strong> to choose which categories appear there.</li>
             <li>Turn any selected time range into an arrangement section. Its edges snap to bar starts, then you can click its block to give it your own name.</li>
             <li>Turn on the metronome to hear the current beat grid. A higher ping marks beat 1 of each bar, and manual tempo or grid corrections take effect immediately.</li>
             <li>Use the spectrum band buttons, pitch-locked speed control, search, and optional read-ahead notes while listening.</li>
@@ -69,7 +70,7 @@
         <summary>about &amp; legal</summary>
         <div class="legal-drawer__body">
           <p><strong>HearPlot</strong> is a local desktop workspace for annotating recordings by time and frequency.</p>
-          <p>Version <span data-app-version>0.3.0</span><br />© 2026 Pat Carroll. All rights reserved.</p>
+          <p>Version <span data-app-version>0.3.1</span><br />© 2026 Pat Carroll. All rights reserved.</p>
           <div class="legal-drawer__actions">
             <button type="button" class="text-button legal-link" data-legal-document="privacy">privacy policy</button>
             <button type="button" class="text-button legal-link" data-legal-document="terms">terms of use</button>
@@ -227,6 +228,22 @@
           <div class="field-stack">
             <!-- The main audio field and the live level meter share the same vertical space. -->
             <div class="field-main">
+              <div class="waveform-annotation-settings">
+                <label class="waveform-annotation-toggle">
+                  <input id="showAnnotationsCheckbox" type="checkbox" aria-controls="waveformAnnotationHighlights annotationRegionsLayer" />
+                  Show annotations
+                </label>
+                <details id="waveformCategories" class="waveform-categories">
+                  <summary>Waveform categories</summary>
+                  <div class="waveform-categories__panel">
+                    <div class="waveform-categories__actions">
+                      <button id="selectAllWaveformCategories" type="button">Select all</button>
+                      <button id="deselectAllWaveformCategories" type="button">Deselect all</button>
+                    </div>
+                    <div id="waveformCategoryList" class="waveform-categories__list" role="group" aria-label="Visible waveform categories"></div>
+                  </div>
+                </details>
+              </div>
               <div class="time-ruler-row">
                 <div class="field-axis field-axis--time"><span id="rulerPrimaryLabel">time</span><span id="rulerSecondaryLabel">min:sec</span></div>
                 <div id="timeRuler" class="time-ruler" aria-hidden="true"></div>
@@ -238,6 +255,7 @@
                   <canvas id="waveformCanvas"></canvas>
                   <!-- Beat lines are a separate layer so the waveform itself stays untouched. -->
                   <div id="waveformBeatGrid" class="beat-grid beat-grid--waveform" aria-hidden="true" hidden></div>
+                  <div id="waveformAnnotationHighlights" class="annotation-regions" aria-hidden="true"></div>
                   <div id="waveformAnnotationRegionsLayer" class="annotation-regions" aria-label="Saved waveform regions"></div>
                   <div id="waveSelection" class="selection selection--wave" hidden></div>
                   <div id="wavePlayhead" class="playhead"></div>
@@ -254,7 +272,6 @@
                   <div id="annotationRegionsLayer" class="annotation-regions" aria-label="Saved spectrogram regions"></div>
                   <div id="spectrogramSelection" class="selection selection--spectrum" hidden></div>
                   <div id="spectrumPlayhead" class="playhead"></div>
-                  <button id="showAnnotationsButton" class="spectrogram-toggle" type="button" aria-pressed="false">show annotations: off</button>
                   <!-- These shortcuts apply a steep listening filter to the full transport. -->
                   <div id="spectrumBandControls" class="spectrum-band-controls" aria-label="Frequency listening presets">
                     <button type="button" data-band="sub">sub</button>
@@ -422,7 +439,7 @@
     <dialog id="legalDialog" class="legal-dialog" aria-labelledby="legalDialogTitle">
       <div class="legal-dialog__head">
         <div>
-            <p class="legal-dialog__eyebrow">HearPlot · version <span data-app-version>0.3.0</span></p>
+          <p class="legal-dialog__eyebrow">HearPlot · version <span data-app-version>0.3.1</span></p>
           <h2 id="legalDialogTitle">Legal information</h2>
         </div>
         <button id="legalDialogClose" class="quiet-action" type="button" aria-label="Close legal information">close</button>

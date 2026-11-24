@@ -1,6 +1,6 @@
 {
   "name": "music-analyser",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "Pat Carroll",
   "description": "A spectrogram annotation platform for close listening, music education and precise feedback on recordings.",
   "main": "main.cjs",

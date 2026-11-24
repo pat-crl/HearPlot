@@ -112,6 +112,7 @@ const state = {
   selectedAnnotationId: null,
   showHoverRegions: storage.getItem("music-analyser-hover-regions") !== "off",
   showAnnotationRegions: storage.getItem("music-analyser-show-annotations") === "on",
+  hiddenWaveformCategories: new Set(),
   // Bar lines can be made quieter without reducing the finer beat reference.
   barMarkerOpacity: storedBarMarkerOpacity(),
   meterContext: null,
@@ -204,6 +205,7 @@ const ui = {
   volumeSlider: document.querySelector("#volumeSlider"),
   waveformFrame: document.querySelector("#waveformFrame"),
   waveformCanvas: document.querySelector("#waveformCanvas"),
+  waveformAnnotationHighlights: document.querySelector("#waveformAnnotationHighlights"),
   waveformAnnotationRegionsLayer: document.querySelector("#waveformAnnotationRegionsLayer"),
   waveSelection: document.querySelector("#waveSelection"),
   wavePlayhead: document.querySelector("#wavePlayhead"),
@@ -212,7 +214,9 @@ const ui = {
   annotationRegionsLayer: document.querySelector("#annotationRegionsLayer"),
   spectrogramSelection: document.querySelector("#spectrogramSelection"),
   spectrumPlayhead: document.querySelector("#spectrumPlayhead"),
-  showAnnotationsButton: document.querySelector("#showAnnotationsButton"),
+  showAnnotationsCheckbox: document.querySelector("#showAnnotationsCheckbox"),
+  waveformCategories: document.querySelector("#waveformCategories"),
+  waveformCategoryList: document.querySelector("#waveformCategoryList"),
   activeBandOverlay: document.querySelector("#activeBandOverlay"),
   spectrumBandControls: document.querySelector("#spectrumBandControls"),
   frequencyScale: document.querySelector(".frequency-scale"),
@@ -879,6 +883,8 @@ function normaliseLinkedSelection(selection) {
 }
 
 // Standard media controls update both the audio element and our visual playhead.
+ui.playButton.setAttribute("aria-keyshortcuts", "Space");
+ui.playButton.title = "Play or pause recording (Space)";
 ui.playButton.addEventListener("click", async () => {
   if (!state.audioBuffer) return;
   if (ui.audio.paused) {
@@ -1683,9 +1689,14 @@ function clearAuditionStopTimer() {
 }
 
 function updateAuditionButtons() {
-  document.querySelectorAll(".audition-button").forEach((button) => {
-    const isPlaying = button.dataset.id === state.auditionAnnotationId && button.dataset.mode === state.auditionPlaybackMode && !ui.audio.paused;
-    button.classList.toggle("is-playing", isPlaying);
+  document.querySelectorAll(".timeline-item.is-selected .timeline-item__play").forEach((button) => {
+    const isPlaying = button.dataset.id === state.auditionAnnotationId
+      && button.dataset.mode === state.auditionPlaybackMode
+      && state.auditionSelectionKey === "primary"
+      && !state.auditionLoop
+      && !ui.audio.paused;
+    const label = isPlaying ? "Pause" : "Play";
+    if (button.textContent !== label) button.textContent = label;
   });
   document.querySelectorAll(".annotation-region__control").forEach((button) => {
     const sameRegion = button.dataset.annotationId === state.auditionAnnotationId
@@ -2315,6 +2326,18 @@ ui.quickNoteInput.addEventListener("keydown", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.defaultPrevented || event.target.closest?.("dialog[open]")) return;
   const modifier = event.metaKey || event.ctrlKey;
+  if (event.key === " " || event.code === "Space") {
+    if (modifier || event.altKey || event.shiftKey || event.isComposing || !state.audioBuffer) return;
+    const target = event.target;
+    // Leave Space to the control that has focus, including native controls and
+    // inline editors. Cards already handle Space to reveal their saved regions.
+    if (target.isContentEditable || target.closest?.(
+      'button, input, select, textarea, summary, a[href], .timeline-item, [role="button"], [role="checkbox"], [role="option"]',
+    ) || document.querySelector("dialog[open]")) return;
+    event.preventDefault();
+    if (!event.repeat) ui.playButton.click();
+    return;
+  }
   if (modifier && event.key.toLowerCase() === "z") {
     const active = document.activeElement;
     const isEditingText = active?.matches?.("input, textarea, [contenteditable='true']");
@@ -2325,6 +2348,12 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key !== "Escape") return;
+  if (ui.waveformCategories.open && ui.waveformCategories.contains(event.target)) {
+    event.preventDefault();
+    ui.waveformCategories.open = false;
+    ui.waveformCategories.querySelector("summary").focus();
+    return;
+  }
   const openPicker = document.querySelector(".category-picker__button[aria-expanded='true']");
   if (openPicker) {
     event.preventDefault();
@@ -2570,6 +2599,7 @@ function renderCategoryOptions(selectedCategory = ui.categorySelect.value) {
   ui.filterSelect.replaceChildren(new Option("all categories", "all"));
   state.categories.forEach((category) => ui.filterSelect.append(new Option(category, category)));
   ui.filterSelect.value = state.categories.includes(activeFilter) ? activeFilter : "all";
+  renderWaveformCategoryOptions();
 
   const quickCategory = ui.quickCategorySelect.value;
   ui.quickCategorySelect.replaceChildren();
@@ -3209,7 +3239,7 @@ function renderTimeline() {
 
   ui.annotationCount.textContent = String(state.annotations.length).padStart(2, "0");
   ui.timelineSummary.textContent = state.annotations.length === 1 ? "1 annotation" : `${state.annotations.length} annotations`;
-  renderAnnotationRegions();
+  refreshAnnotationVisibility();
   updateTimelineSelectionClasses();
   updateSelectionDisplay();
   updateAuditionButtons();
@@ -3313,7 +3343,24 @@ function createTimelineItem(annotation) {
   time.className = "timeline-item__time";
   time.innerHTML = `<span>${formatMusicalRange(annotation.start, annotation.end)}</span><span class="timeline-item__frequency">${annotation.source === "spectrogram" ? `${formatFrequency(annotation.minFrequency)} — ${formatFrequency(annotation.maxFrequency)}` : "full spectrum"}</span>`;
   time.title = `${formatMusicalRange(annotation.start, annotation.end)} · ${formatTime(annotation.start, true)} — ${formatTime(annotation.end, true)}`;
-  head.append(time, category);
+
+  const mode = annotation.source === "spectrogram" ? "iso" : "full";
+  const playButton = document.createElement("button");
+  playButton.type = "button";
+  playButton.className = "timeline-item__play";
+  playButton.dataset.id = annotation.id;
+  playButton.dataset.mode = mode;
+  playButton.textContent = "Play";
+  playButton.title = mode === "iso" ? "Audition this note’s saved frequency band" : "Audition this note’s saved time range";
+  playButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    auditionAnnotation(annotation, mode);
+  });
+
+  const details = document.createElement("div");
+  details.className = "timeline-item__details";
+  details.append(category, playButton);
+  head.append(time, details);
 
   const note = document.createElement("p");
   note.className = "timeline-item__note";
@@ -3545,10 +3592,33 @@ function categoryColour(category) {
   return palette.get(category) || "hsl(285 72% 58%)";
 }
 
+function renderWaveformAnnotationHighlights() {
+  const layer = ui.waveformAnnotationHighlights;
+  layer.replaceChildren();
+  if (!state.audioBuffer || !state.showAnnotationRegions) return;
+
+  const duration = state.audioBuffer.duration;
+  const highlights = document.createDocumentFragment();
+  for (const annotation of state.annotations) {
+    if (state.hiddenWaveformCategories.has(annotation.category)) continue;
+    const colour = categoryColour(annotation.category);
+    for (const selection of annotationSelections(annotation)) {
+      const highlight = document.createElement("span");
+      highlight.className = "waveform-annotation-highlight";
+      highlight.dataset.category = annotation.category;
+      highlight.dataset.annotationId = annotation.id;
+      highlight.style.setProperty("--category-colour", colour);
+      highlight.style.left = `${(selection.start / duration) * 100}%`;
+      highlight.style.width = `${((selection.end - selection.start) / duration) * 100}%`;
+      highlights.append(highlight);
+    }
+  }
+  layer.append(highlights);
+}
+
 function renderAnnotationRegions() {
   ui.waveformAnnotationRegionsLayer.replaceChildren();
   ui.annotationRegionsLayer.replaceChildren();
-  syncShowAnnotationsButton();
   if (!state.audioBuffer) return;
 
   const duration = state.audioBuffer.duration;
@@ -3557,6 +3627,11 @@ function renderAnnotationRegions() {
     const isActive = annotation.id === state.selectedAnnotationId || annotation.id === state.hoveredAnnotation?.id;
     if (!state.showAnnotationRegions && !isActive) return;
     annotationSelections(annotation).forEach((selection, index) => {
+      const isSpectrogram = selection.source === "spectrogram";
+      // Keep the waveform overview passive. The focused note still reveals
+      // the original region controls for playing and looping its saved spans.
+      if (!isSpectrogram && !isActive) return;
+
       const selectionKey = selectionRegionKey(selection, index);
       const region = document.createElement("div");
       region.className = "annotation-region";
@@ -3567,7 +3642,7 @@ function renderAnnotationRegions() {
       region.style.width = `${Math.max(0.2, ((selection.end - selection.start) / duration) * 100)}%`;
 
       let targetLayer = ui.waveformAnnotationRegionsLayer;
-      if (selection.source === "spectrogram") {
+      if (isSpectrogram) {
         const top = ratioFromFrequency(selection.maxFrequency, nyquist) * 100;
         const bottom = ratioFromFrequency(selection.minFrequency, nyquist) * 100;
         region.style.top = `${top}%`;
@@ -3580,7 +3655,7 @@ function renderAnnotationRegions() {
 
       const controls = document.createElement("span");
       controls.className = "annotation-region__controls";
-      const mode = selection.source === "spectrogram" ? "iso" : "full";
+      const mode = isSpectrogram ? "iso" : "full";
       controls.append(
         createRegionAuditionButton(annotation, selection, selectionKey, mode, false),
         createRegionAuditionButton(annotation, selection, selectionKey, mode, true),
@@ -3617,20 +3692,56 @@ function createRegionAuditionButton(annotation, selection, selectionKey, mode, s
   return button;
 }
 
-function syncShowAnnotationsButton() {
-  ui.showAnnotationsButton.setAttribute("aria-pressed", String(state.showAnnotationRegions));
-  ui.showAnnotationsButton.textContent = `show annotations: ${state.showAnnotationRegions ? "on" : "off"}`;
+function renderWaveformCategoryOptions() {
+  const labels = state.categories.map((category) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = category;
+    checkbox.checked = !state.hiddenWaveformCategories.has(category);
+    const swatch = document.createElement("span");
+    swatch.className = "waveform-categories__swatch";
+    swatch.style.backgroundColor = categoryColour(category);
+    swatch.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.textContent = category;
+    label.append(checkbox, swatch, name);
+    return label;
+  });
+  ui.waveformCategoryList.replaceChildren(...labels);
 }
 
-ui.showAnnotationsButton.addEventListener("pointerdown", (event) => event.stopPropagation());
-ui.showAnnotationsButton.addEventListener("click", (event) => {
-  event.stopPropagation();
-  state.showAnnotationRegions = !state.showAnnotationRegions;
-  storage.setItem("music-analyser-show-annotations", state.showAnnotationRegions ? "on" : "off");
+function refreshAnnotationVisibility() {
+  renderWaveformAnnotationHighlights();
   renderAnnotationRegions();
+}
+
+ui.showAnnotationsCheckbox.checked = state.showAnnotationRegions;
+ui.showAnnotationsCheckbox.addEventListener("change", () => {
+  state.showAnnotationRegions = ui.showAnnotationsCheckbox.checked;
+  storage.setItem("music-analyser-show-annotations", state.showAnnotationRegions ? "on" : "off");
+  refreshAnnotationVisibility();
 });
 
-syncShowAnnotationsButton();
+ui.waveformCategoryList.addEventListener("change", ({ target }) => {
+  if (target.checked) state.hiddenWaveformCategories.delete(target.value);
+  else state.hiddenWaveformCategories.add(target.value);
+  renderWaveformAnnotationHighlights();
+});
+
+function setAllWaveformCategories(visible) {
+  state.hiddenWaveformCategories = new Set(visible ? [] : state.categories);
+  ui.waveformCategoryList.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = visible;
+  });
+  renderWaveformAnnotationHighlights();
+}
+
+document.querySelector("#selectAllWaveformCategories").addEventListener("click", () => setAllWaveformCategories(true));
+document.querySelector("#deselectAllWaveformCategories").addEventListener("click", () => setAllWaveformCategories(false));
+document.addEventListener("pointerdown", (event) => {
+  if (ui.waveformCategories.open && !ui.waveformCategories.contains(event.target)) ui.waveformCategories.open = false;
+});
 
 ui.filterSelect.addEventListener("change", renderTimeline);
 ui.annotationSearch.addEventListener("input", renderTimeline);

@@ -43,12 +43,18 @@ let timeout;
       const spectrum=ui.spectrogramFrame.getBoundingClientRect();
       const waveform=ui.waveformFrame.getBoundingClientRect();
       const transport=ui.playButton.closest('.transport').getBoundingClientRect();
+      ui.waveformCategories.open = true;
+      const categories=ui.waveformCategories.querySelector('.waveform-categories__panel').getBoundingClientRect();
+      const field=ui.waveformCategories.closest('.field-stack').getBoundingClientRect();
+      const categoriesFit=categories.height>0 && categories.top>=transport.bottom && categories.bottom<=field.bottom+1
+        && categories.left>=field.left && categories.right<=field.right+1;
+      ui.waveformCategories.open = false;
       state.selection={start:1,end:3,source:'waveform'};
       openQuickNote({clientX:innerWidth-5,clientY:innerHeight-5});
       ui.quickCustomCategoryRow.hidden=false;
       positionQuickNote();
       const quick=ui.quickNoteForm.getBoundingClientRect();
-      return {width:innerWidth,height:innerHeight,normalOverflow,controls,menuLeft:menu.left,menuRight:menu.right,spectrumBottom:spectrum.bottom,waveformBottom:waveform.bottom,spectrumTop:spectrum.top,transportBottom:transport.bottom,waveformTop:waveform.top,quickBottom:quick.bottom,quickRight:quick.right};
+      return {width:innerWidth,height:innerHeight,normalOverflow,controls,menuLeft:menu.left,menuRight:menu.right,spectrumBottom:spectrum.bottom,waveformBottom:waveform.bottom,spectrumTop:spectrum.top,transportBottom:transport.bottom,waveformTop:waveform.top,categoriesFit,quickBottom:quick.bottom,quickRight:quick.right};
     })()`);
     const ok = Math.abs(measurements.width - width / zoom) <= 1
       && !measurements.normalOverflow
@@ -57,6 +63,7 @@ let timeout;
       && measurements.spectrumBottom <= measurements.height+1
       && measurements.waveformBottom <= measurements.spectrumTop+1
       && measurements.transportBottom <= measurements.waveformTop+1
+      && measurements.categoriesFit
       && measurements.quickBottom <= measurements.height+1
       && measurements.quickRight <= measurements.width+1;
     results.push({ name: `layout ${width}×${height} at ${zoom*100}% zoom`, ok, error: ok ? null : JSON.stringify(measurements) });

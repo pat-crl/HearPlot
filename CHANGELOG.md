@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 24 November 2026
+
+- Play and pause from the recording view with **Space**. The shortcut respects note editing, focused controls and dialogs.
+- Play the primary passage from the selected note. Browsing notes is silent, and spectrogram notes audition their saved frequency band.
+- See saved and linked passages as colour-coded spans on the main waveform. Show or hide the highlights, choose individual categories, or select and deselect all categories at once.
+- Keep the waveform, spectrogram and category controls usable in compact focused view and at high zoom.
+
 ## 0.3.0 — 18 November 2026
 
 - Named the app HearPlot for its first signed and notarised macOS download. Existing sessions and local settings carry over.

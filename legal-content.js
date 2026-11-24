@@ -11,7 +11,7 @@ const SUPPORT_EMAIL = "info@pcarroll.au";
 
 const musicAnalyserLegal = {
   appName: "HearPlot",
-  version: "0.3.0",
+  version: "0.3.1",
   developer: "Pat Carroll",
   effectiveDate: "18 November 2026",
   copyright: "© 2026 Pat Carroll. All rights reserved.",

@@ -2,13 +2,13 @@
 
 **A spectrogram annotation platform for close listening, music education and precise feedback on recordings.**
 
-**[Download HearPlot for Mac (.dmg)](https://github.com/pat-crl/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg)**
+**[Download HearPlot 0.3.1 for Mac (.dmg)](https://github.com/pat-crl/HearPlot/releases/download/v0.3.1/HearPlot-0.3.1-Apple-Silicon.dmg)**
 
-For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pat-crl/HearPlot/releases/tag/v0.3.0)
+For **Apple silicon Macs (M-series), macOS 12 or later**. Open the disk image and drag HearPlot into Applications. [Release notes](https://github.com/pat-crl/HearPlot/releases/tag/v0.3.1)
 
 HearPlot is an ongoing project by Pat Carroll investigating how a shared visual representation of a recording can support close listening, musical analysis and the exchange of feedback. It provides a workspace in which written annotations are attached to specific moments and frequency regions within a spectrogram. Students of music and audio can use it to analyse existing recordings in depth. Artists, collaborators, engineers and record label A&R teams can use it to give clear feedback on music.
 
-[Project discussion](https://pcarroll.au/tools/hearplot/) · [Current capabilities](#current-capabilities) · [Installation](#installation)
+[Project discussion](https://pcarroll.au/hearplot/) · [Current capabilities](#current-capabilities) · [Installation](#installation)
 
 ## Project context
 
@@ -22,11 +22,19 @@ In a classroom, a timestamp can locate a passage. A student may still need help 
 
 Feedback often depends on vague descriptions such as “the shrill sound in the high end at four minutes thirty”. Attaching a note to a time-and-frequency region gives the recipient a specific area to audition in the context of the full recording. One observation can link to several passages when a sound or compositional idea recurs.
 
-Version **0.3.0** brings these workflows into a redesigned workspace and adds MixLab for more detailed listening and comparison. How students use frequency-focused playback, and whether precise references change the quality of feedback, remain questions for evaluation.
+MixLab adds detailed measurements and reference comparison to the same workspace. How students use frequency-focused playback, and whether precise references change the quality of feedback, remain questions for evaluation.
 
 ![HearPlot showing a waveform, spectrogram, arrangement section and two example annotations.](docs/images/hearplot-overview.jpg)
 
 *Bounty Hill's “Drastic Indifference”, from Fourth Cause, with illustrative listening tasks. The recording is not included in this repository.*
+
+## What’s new in 0.3.1
+
+- Press **Space** in the recording view to play or pause while you listen.
+- Select a saved note to see where it sits in the recording. Use its **Play** button to hear the saved passage when you’re ready. Spectrogram notes replay the saved frequency band.
+- Turn on **Show annotations** to see colour-coded spans on the main waveform, including linked passages. Use **Waveform categories** to show individual categories, select all or deselect all.
+
+![Waveform category filters and a selected Texture annotation with its Play button, over Bounty Hill’s Drastic Indifference.](docs/images/hearplot-waveform-categories.jpg)
 
 ## Related work and design problem
 
@@ -43,11 +51,11 @@ HearPlot puts the **observation** at the centre of the workflow. Draw a time–f
 | Visual listening | Aligned waveform and logarithmic spectrogram, drawn from a local audio file. |
 | Precise annotation | Time ranges on the waveform; time-and-frequency boxes on the spectrogram; exact keyboard entry in seconds and hertz; several linked regions for one note. |
 | Structured notes | Built-in form, melody, rhythm, harmony, timbre, texture and dynamics categories, plus custom categories and colour-coded cards. |
-| Region audition | Play or loop saved regions. Spectrogram selections use steep high-pass and low-pass filters to focus listening on the selected band. |
-| Listening controls | Sub-to-air frequency presets, pitch-preserving playback at 50%, 75%, 100% and 125%, selection looping and a stereo level meter. |
+| Region audition | Play the primary region from the selected note or use the saved region’s play and loop controls. Spectrogram playback uses steep high-pass and low-pass filters to focus listening on the saved band. |
+| Listening controls | Spacebar play and pause, sub-to-air frequency presets, pitch-preserving playback at 50%, 75%, 100% and 125%, selection looping and a stereo level meter. |
 | Musical time | Estimated BPM, beat phase and downbeat, with confidence indicators, manual grid correction and an optional accented metronome. |
 | Arrangement | Named and coloured section markers, with boundaries snapped to bar starts. Detailed annotations keep their exact selected seconds. |
-| Reviewing | Search, category filters, optional read-ahead notes, focused view and undo/redo. |
+| Reviewing | Colour-coded annotation spans and category visibility on the main waveform, plus separate notes search and filtering, optional read-ahead notes, focused view and undo/redo. |
 | Saving and exchange | Local autosave, recent recordings, editable JSON session import/export and categorised plain-text copying. A session can include a sender-provided HTTPS audio-download link. |
 | Measurements | Integrated LUFS, sample peak and whole-track RMS. Open MixLab for momentary and short-term loudness, loudness range, an estimated true peak, dynamics, stereo and frequency-band measurements. |
 | Mix comparison | Optional reference recording, A/B audition at the same elapsed position where possible, attenuation-only level matching, and exportable measurements. |
@@ -60,7 +68,7 @@ HearPlot puts the **observation** at the centre of the workflow. Draw a time–f
 
 ### Download and install on a Mac
 
-1. [Download the signed HearPlot DMG](https://github.com/pat-crl/HearPlot/releases/download/v0.3.0/HearPlot-0.3.0-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
+1. [Download the signed HearPlot 0.3.1 DMG](https://github.com/pat-crl/HearPlot/releases/download/v0.3.1/HearPlot-0.3.1-Apple-Silicon.dmg) for an Apple silicon Mac with macOS 12 or later.
 2. Open the downloaded file and drag **HearPlot** onto the **Applications** folder in the window.
 3. Open **HearPlot** from Applications. If macOS asks you to confirm the first launch, choose **Open**.
 
@@ -92,8 +100,8 @@ On Apple Silicon, the app is written to `dist/mac-arm64/HearPlot.app`. Unsigned 
 1. Choose or drop a recording. WAV and uncompressed PCM AIFF are supported. Other formats use Chromium’s decoder.
 2. Check the tempo and beat grid if you want to work in bars. Correct its estimate where necessary.
 3. Drag across the waveform, or draw a box on the spectrogram. Choose a category and add an observation.
-4. Select a saved note to reveal its region. Use that region's play or loop control to listen again.
-5. Map arrangement sections separately from the analytical notes. Use search and category filters to review the analysis.
+4. Select a saved note to reveal its regions. Press its **Play** button to hear the primary passage or use the individual region controls to play or loop a linked passage.
+5. Turn on **Show annotations** and choose **Waveform categories** to review where notes occur. Map arrangement sections separately from the notes.
 6. Open MixLab for detailed measurements or choose a reference to compare. Live reference playback requires the audio file. Saved sessions retain reference measurements.
 7. Save an editable JSON session, or copy the analysis as text. Keep the recording and session backed up separately.
 
@@ -117,7 +125,7 @@ npm run test:integration
 npm run sync:legal
 ```
 
-Run the unit and Electron integration checks before building. The core and MixLab workloads use cancellable Web Workers with transferred PCM, while playback and editing remain in the renderer. The app uses the existing version 3 session format with optional MixLab measurements, and reads supported earlier sessions. For 0.3.0, 70 unit tests and 51 Electron integration and layout checks passed on Apple silicon macOS. Coverage includes loudness calibration, tempo and downbeat estimation, frequency mapping, region playback, session recovery, A/B comparison, and layout at 200% zoom.
+Run the unit and Electron integration checks before building. The core and MixLab workloads use cancellable Web Workers with transferred PCM, while playback and editing remain in the renderer. The app uses the existing version 3 session format with optional MixLab measurements, and reads supported earlier sessions. For 0.3.1, 70 unit tests and 55 Electron integration and layout checks passed on Apple silicon macOS. Coverage includes keyboard transport, selected-note playback, waveform category visibility, session recovery, A/B comparison and layout at 200% zoom.
 
 For a browser-based development check, serve this directory with `python3 -m http.server 4173` and open `http://127.0.0.1:4173`. Adding `?demo=1` generates a synthetic test recording. Native metadata and recent-file reopening require Electron.
 
